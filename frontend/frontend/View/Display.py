@@ -6,7 +6,10 @@ GROUP = {
              toggle="contents", tip="Layers"),
 
         dict(id="show-statistics", label="Statistics", icon="stats", kind="action",
-               action="show_stats", tip="Show layer statistics and properties"),
+               action="toggle_stats", tip="Show layer statistics and properties"),
+
+        dict(id="attribute-table", label="Attribute Table", icon="table", kind="action",
+             action="attribute_table", tip="Show the attribute table of a vector layer"),
 
         dict(id="pane-pixel", label="Pixel Inspector", icon="crosshair", kind="toggle",
              toggle="pixel_inspector", tip="Pixel Inspector"),

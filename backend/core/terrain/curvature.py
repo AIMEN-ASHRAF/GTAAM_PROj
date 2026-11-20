@@ -6,7 +6,7 @@ import numpy as np
 from core.raster.windows import shifted
 
 
-def compute_curvature(dem: np.ndarray, dx: float, dy: float) -> np.ndarray:
+def compute_curvature(dem: np.ndarray, dx: float | np.ndarray, dy: float | np.ndarray) -> np.ndarray:
     n = shifted(dem.astype(np.float64))
     d2x = ((n["w"] + n["e"]) / 2 - n["c"]) / dx ** 2
     d2y = ((n["n"] + n["s"]) / 2 - n["c"]) / dy ** 2

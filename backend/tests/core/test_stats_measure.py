@@ -136,3 +136,62 @@ def test_geodesic_matches_arcmap():
 
 def test_geodesic_same_point_is_zero():
     assert geodesic_distance(73.2, 33.3, 73.2, 33.3) == 0.0
+
+
+# ---- polygon area: geodesic (WGS84) on lon/lat, planar on projected coordinates ----
+# Reference numbers come from GeographicLib (Karney), an independent geodesic library.
+@pytest.mark.parametrize("polygon, area_m2, perimeter_m", [
+    ([(73.5, 33.5), (73.5105, 33.5), (73.5105, 33.509), (73.5, 33.509)], 973_900.8, 3_947.7),
+    ([(73.5, 33.5), (73.6, 33.5), (73.6, 33.59), (73.5, 33.59)], 92_709_831.2, 38_539.4),
+    ([(73, 33), (74, 33), (74, 34), (73, 34)], 10_306_245_947.5, 407_664.1),
+    ([(70, 30), (74, 31), (75, 35), (71, 36)], 207_535_930_565.0, None),
+    ([(20, -34), (21, -34), (21, -33), (20, -33)], 10_306_245_947.5, None),
+])
+def test_geodesic_polygon_area_matches_geographiclib(polygon, area_m2, perimeter_m):
+    r = polygon_area(polygon, geographic=True)
+    assert r["method"] == "geodesic"
+    assert r["area_m2"] == pytest.approx(area_m2, rel=1e-6)
+    if perimeter_m:
+        assert r["perimeter_m"] == pytest.approx(perimeter_m, rel=1e-5)
+
+
+def test_geodesic_area_ignores_direction_and_repeated_first_point():
+    sq = [(73, 33), (74, 33), (74, 34), (73, 34)]
+    a = polygon_area(sq, True)["area_m2"]
+    assert polygon_area(list(reversed(sq)), True)["area_m2"] == pytest.approx(a)
+    assert polygon_area(sq + [sq[0]], True)["area_m2"] == pytest.approx(a)
+
+
+def test_geodesic_area_across_the_antimeridian():
+    r = polygon_area([(179.5, 10), (-179.5, 10), (-179.5, 11), (179.5, 11)], True)
+    assert r["area_m2"] == pytest.approx(12_108_467_312.6, rel=1e-6)
+
+
+def test_projected_area_is_flat_and_has_a_perimeter():
+    r = polygon_area([(0, 0), (100, 0), (100, 50), (0, 50)], geographic=False)
+    assert r["method"] == "planar"
+    assert r["area_m2"] == 5000 and r["perimeter_m"] == 300
+    assert r["area_ha"] == pytest.approx(0.5) and r["area_km2"] == pytest.approx(0.005)
+
+
+def test_geodesic_direct_and_inverse_agree():
+    from core.measure.distance import geodesic_direct, geodesic_inverse
+    dist, az = geodesic_inverse(73.1, 33.2, 73.9, 33.8)
+    lon, lat = geodesic_direct(73.1, 33.2, az, dist)
+    assert (lon, lat) == pytest.approx((73.9, 33.8), abs=1e-8)
+
+
+def test_surface_area_flat_and_tilted():
+    import numpy as np
+    from core.measure.surface_area import surface_area
+    from core.raster.model import Raster
+    tf = (10.0, 0, 0.0, 0, -10.0, 1000.0)
+    box = [(200, 800), (800, 800), (800, 200), (200, 200)]
+    flat = Raster(np.full((100, 100), 50, np.float32), tf, "EPSG:32643")
+    f = surface_area(flat, box)
+    assert abs(f["surface_to_flat_ratio"] - 1.0) < 1e-9
+    assert abs(f["surface_area_m2"] - 600 * 600) / (600 * 600) < 0.04
+    cols = np.arange(100, dtype=np.float32) * 10          # rises 10 m per 10 m cell = 45 degrees
+    ramp = Raster(np.tile(cols, (100, 1)), tf, "EPSG:32643")
+    t = surface_area(ramp, box)
+    assert abs(t["surface_to_flat_ratio"] - 2 ** 0.5) < 1e-6

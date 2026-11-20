@@ -8,15 +8,18 @@ import numpy as np
 from core.measure import area as core_area
 from core.measure import distance as core_distance
 from core.measure import profile as core_profile
-from core.raster.crs import cell_size_meters, is_geographic
+from core.measure.surface_area import surface_area
+from core.raster.crs import cell_size_by_row, grid_north_offset, is_geographic
+from core.raster.resample import square_cells
 from core.stats import histogram, layer_stats, nodata_check, outliers
-from core.terrain.aspect import compute_aspect
+from core.terrain.aspect import aspect_from_gradients, compute_aspect
 from core.terrain.contours import contour_lines
 from core.terrain.curvature import compute_curvature
 from core.terrain.hillshade import compute_hillshade
 from core.terrain.roughness import compute_roughness
 from core.terrain.ruggedness import compute_ruggedness
-from core.terrain.slope import compute_slope
+from core.terrain.slope import compute_slope, plane_fit_gradients
+from core.terrain.slope_ellipsoid import ellipsoid_gradients, ellipsoid_slope
 from core.terrain.tpi import compute_tpi
 from config import get_settings
 from shared.errors import BadRequest
@@ -65,14 +68,47 @@ def distance(layer_id: str, points=None, pixels=None, units: str = "metres",
     return result
 
 
-def area(layer_id: str, polygon) -> dict:
+def area(layer_id: str, polygon=None, pixels=None, units: str = "square metres",
+         include_surface: bool = False) -> dict:
     r = _layer(layer_id).raster
-    return core_area.polygon_area(polygon, is_geographic(r))
+    if polygon is None:
+        polygon = _pixels_to_xy(r, pixels)
+    result = core_area.polygon_area(polygon, is_geographic(r))
+    unit = core_area.auto_unit(result["area_m2"]) if units == "auto" else units
+    result["area"] = core_area.from_square_metres(result["area_m2"], unit)
+    result["unit"] = core_area.UNIT_SYMBOLS[unit]
+    long_perimeter = result["perimeter_m"] >= 1000          # metres for a small border, kilometres for a long one
+    result["perimeter"] = result["perimeter_m"] / 1000 if long_perimeter else result["perimeter_m"]
+    result["perimeter_unit"] = "km" if long_perimeter else "m"
+    if include_surface:
+        try:
+            s = surface_area(r, polygon)
+        except ValueError as e:
+            raise BadRequest(str(e), code="bad_surface_area")
+        s["surface_area"] = core_area.from_square_metres(s["surface_area_m2"], unit)
+        result["surface"] = s
+    return result
 
 
-def elevation_profile(layer_id: str, line, samples: int) -> dict:
+def _profile_units(out: dict, units: str) -> dict:
+    """Convert the distance axis (metres from the core) to the chosen unit; heights stay as they are."""
+    total_m = out["total_distance"]
+    if units == "auto":
+        units = "kilometres" if total_m >= 1000 else "metres"
+    out["distance"] = [None if d is None else core_distance.from_metres(d, units) for d in out["distance"]]
+    out["total_distance_m"] = total_m
+    out["total_distance"] = core_distance.from_metres(total_m, units)
+    out["distance_units"] = core_distance.UNIT_SYMBOLS[units]
+    return out
+
+
+def elevation_profile(layer_id: str, line=None, samples: int = 200, pixels=None,
+                      units: str = "metres") -> dict:
     r = _layer(layer_id).raster
-    return core_profile.elevation_profile(r, line, is_geographic(r), samples)
+    if line is None:
+        line = _pixels_to_xy(r, pixels)
+    out = core_profile.elevation_profile(r, line, is_geographic(r), samples)
+    return _profile_units(out, units)
 
 
 # ---- quality & statistics ----
@@ -97,9 +133,9 @@ def outlier_check(layer_id: str, method: str, threshold: float | None) -> dict:
 
 # ---- surface analysis & terrain derivatives (all create a new raster layer) ----
 def _surface(layer_id: str, tool: str, label: str,
-             fn: Callable[[np.ndarray, float, float], np.ndarray]) -> dict:
+             fn: Callable[[np.ndarray, float | np.ndarray, float | np.ndarray], np.ndarray]) -> dict:
     src = _layer(layer_id)
-    dx, dy = cell_size_meters(src.raster)
+    dx, dy = cell_size_by_row(src.raster)       # degree rasters: one size per row
     return _derive(src, fn(src.raster.data, dx, dy), tool, label)
 
 
@@ -108,14 +144,44 @@ def hillshade(layer_id: str, azimuth: float, altitude: float, z_factor: float) -
                     lambda d, dx, dy: compute_hillshade(d, dx, dy, azimuth, altitude, z_factor))
 
 
-def slope(layer_id: str, units: str) -> dict:
-    return _surface(layer_id, "slope", f"slope ({units})",
-                    lambda d, dx, dy: compute_slope(d, dx, dy, units))
+def slope(layer_id: str, units: str, method: str = "planar") -> dict:
+    label = f"slope ({units})" if method == "planar" else f"slope ({units}, {method})"
+    src = _layer(layer_id)
+    if method == "geodesic" and is_geographic(src.raster):
+        # true 3D slope on the WGS84 ellipsoid, like ArcMap GEODESIC. ArcMap first squares non-square
+        # degree cells (JAXA 2" x 1" -> 2" x 2"); we do the same, so the result is a coarser raster.
+        r = square_cells(src.raster) or src.raster
+        data = ellipsoid_slope(r.data, r.origin_y, r.pixel_h, r.pixel_w, units)
+        if r is src.raster:
+            return _derive(src, data, "slope", label)
+        out = add_raster_layer(r.with_data(data), f"{src.name} - {label}, square cells",
+                               derived_from=src.id, tool="slope")
+        return {"layer": out.info(), "statistics": layer_stats.compute(data)}
+    # planar, or geodesic on a projected raster (already in metres, so a plane fit is used)
+    return _surface(layer_id, "slope", label,
+                    lambda d, dx, dy: compute_slope(d, dx, dy, units, method))
 
 
-def aspect(layer_id: str, flat_as_minus_one: bool = False) -> dict:
+def aspect(layer_id: str, flat_as_minus_one: bool = False, method: str = "planar") -> dict:
     flat_value = -1.0 if flat_as_minus_one else None
-    return _surface(layer_id, "aspect", "aspect",
+    label = "aspect" if method == "planar" else f"aspect ({method})"
+    src = _layer(layer_id)
+    if method == "geodesic" and is_geographic(src.raster):
+        # direction of the plane fitted on the WGS84 ellipsoid, like ArcMap GEODESIC (cells squared first, as for slope)
+        r = square_cells(src.raster) or src.raster
+        gx, gn = ellipsoid_gradients(r.data, r.origin_y, r.pixel_h, r.pixel_w)
+        data = aspect_from_gradients(gx, gn, flat_value)
+        if r is src.raster:
+            return _derive(src, data, "aspect", label)
+        out = add_raster_layer(r.with_data(data), f"{src.name} - {label}, square cells",
+                               derived_from=src.id, tool="aspect")
+        return {"layer": out.info(), "statistics": layer_stats.compute(data)}
+    if method == "geodesic":
+        # ArcMap GEODESIC measures from true north; on a projected map "up" is grid north, so turn by the difference
+        offset = grid_north_offset(src.raster)
+        return _surface(layer_id, "aspect", label,
+                        lambda d, dx, dy: aspect_from_gradients(*plane_fit_gradients(d, dx, dy), flat_value, offset))
+    return _surface(layer_id, "aspect", label,
                     lambda d, dx, dy: compute_aspect(d, dx, dy, flat_value))
 
 

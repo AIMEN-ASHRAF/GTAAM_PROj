@@ -133,3 +133,53 @@ def test_distance_auto_unit_picks_metres_or_kilometres(client, layer_id):
     metres = client.post(url, json={"layer_id": layer_id, "units": "kilometres",
                                     "points": [[73.001, 33.4], [73.016, 33.4]]}).json()
     assert metres["elevation_unit"] == "km"                                # explicit units still convert heights
+
+
+def test_area_units_pixels_and_perimeter(client, layer_id):
+    url = f"{API}/analysis/measure/area"
+    box = [[73, 33.4], [73.01, 33.4], [73.01, 33.41], [73, 33.41]]
+    a = client.post(url, json={"layer_id": layer_id, "polygon": box, "units": "auto"}).json()
+    assert a["method"] == "geodesic" and a["unit"] == "km\u00b2"          # about 1.03 km2
+    small = [[73, 33.4], [73.005, 33.4], [73.005, 33.405], [73, 33.405]]
+    h = client.post(url, json={"layer_id": layer_id, "polygon": small, "units": "auto"}).json()
+    assert h["unit"] == "ha" and h["area"] == pytest.approx(h["area_m2"] / 10_000)   # about 26 ha
+    assert a["area"] == pytest.approx(a["area_m2"] / 1e6)
+    assert a["perimeter_unit"] == "km" and a["perimeter"] == pytest.approx(a["perimeter_m"] / 1000)
+    k = client.post(url, json={"layer_id": layer_id, "polygon": box, "units": "square kilometres"}).json()
+    assert k["unit"] == "km\u00b2" and k["area"] == pytest.approx(a["area_m2"] / 1e6)
+    p = client.post(url, json={"layer_id": layer_id, "pixels": [[2, 2], [2, 12], [12, 12], [12, 2]]}).json()
+    assert p["area_m2"] > 0 and p["perimeter_m"] > 0
+    assert client.post(url, json={"layer_id": layer_id, "polygon": box, "pixels": box}).status_code == 422
+    assert client.post(url, json={"layer_id": layer_id}).status_code == 422
+
+
+def test_area_unit_helpers():
+    from core.measure.area import auto_unit, from_square_metres
+    assert auto_unit(5_000) == "square metres" and auto_unit(500_000) == "hectares"
+    assert auto_unit(5_000_000) == "square kilometres"
+    assert from_square_metres(4046.8564224, "acres") == pytest.approx(1)
+    assert from_square_metres(2_589_988.110336, "square miles") == pytest.approx(1)
+
+
+def test_profile_from_clicked_cells_and_units(client, layer_id):
+    base = f"{API}/analysis/measure"
+    p = client.post(f"{base}/elevation-profile", json={"layer_id": layer_id, "samples": 25,
+                    "pixels": [[10, 10], [10, 60]], "units": "kilometres"})
+    assert p.status_code == 200, p.text
+    p = p.json()
+    assert len(p["elevation"]) == 25 and p["distance_units"] == "km"
+    assert abs(p["distance"][-1] - p["total_distance"]) < 1e-9
+    assert abs(p["total_distance"] * 1000 - p["total_distance_m"]) < 1e-6
+    assert p["max_slope_percent"] is not None and "start_elevation" in p
+    bad = client.post(f"{base}/elevation-profile", json={"layer_id": layer_id,
+                      "line": [[73, 33.4], [73.01, 33.4]], "pixels": [[1, 1], [2, 2]]})
+    assert bad.status_code == 422
+
+
+def test_area_with_surface(client, layer_id):
+    r = client.post(f"{API}/analysis/measure/area", json={"layer_id": layer_id, "units": "auto",
+                    "include_surface": True,
+                    "polygon": [[73.005, 33.482], [73.02, 33.482], [73.02, 33.495], [73.005, 33.495]]})
+    assert r.status_code == 200, r.text
+    s = r.json()["surface"]
+    assert s["surface_area_m2"] >= s["flat_cell_area_m2"] * 0.999 and s["cells_used"] > 0

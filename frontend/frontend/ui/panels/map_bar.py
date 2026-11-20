@@ -38,8 +38,13 @@ class MapCanvas(QWidget):
         self.mode = "explore"                 # explore | draw | select
         self.draft: list[tuple[float, float]] = []
         self.measure_done = False             # a measured line is finished and stays on the map
+        self.measure_kind = "line"            # line (Distance) or polygon (Area)
+        self._hints_shown: set[str] = set()    # measure instructions are shown the first time only
         self._zoom_start = None               # corner of the zoom box being dragged (screen position)
         self._zoom_end = None
+        self.swipe_frac = 0.5                 # Swipe tool: divider position as a fraction of the width
+        self._swipe_drag = False
+        self._swipe_name = ""
         self.hover: tuple[float, float] | None = None
         self.selected_region = -1
         self.preview: str | None = None        # None | "edit" | "mosaic"
@@ -139,11 +144,30 @@ class MapCanvas(QWidget):
             "measure": "Click points along the line · Double-click to finish · Right-click removes the last point · Esc to cancel",
             "zoom_in": "Drag a box around the area to zoom in to it · Click to zoom in · Esc to stop",
             "zoom_out": "Drag a box to zoom out (the view shrinks into the box) · Click to zoom out · Esc to stop",
+            "swipe": "Drag the line left or right to compare the top layer with the layers below it · Esc to stop",
         }
-        self.hintChanged.emit(hints.get(mode, ""))
+        if self.measure_kind == "polygon":
+            hints["measure"] = ("Click the corners of the area · Double-click to finish · "
+                               "Right-click removes the last point · Esc to cancel")
+        text = hints.get(mode, "")
+        if mode == "measure":           # the measure instructions only appear the first time each tool is used
+            key = f"measure-{self.measure_kind}"
+            if key in self._hints_shown:
+                text = ""
+            else:
+                self._hints_shown.add(key)
+        self.hintChanged.emit(text)
         self.mode = mode
         self._update_cursor()
         self.modeChanged.emit(mode)
+        self.update()
+
+    def start_measure(self, kind: str) -> None:
+        """Distance ("line") or Area ("polygon"): start a fresh measurement on the map."""
+        self.measure_kind = kind
+        self.draft.clear()
+        self.measure_done = False
+        self.set_mode("measure")
         self.update()
 
     def _update_cursor(self) -> None:
@@ -152,6 +176,7 @@ class MapCanvas(QWidget):
                         "measure": Qt.CursorShape.CrossCursor,
                         "zoom_in": Qt.CursorShape.CrossCursor,
                         "zoom_out": Qt.CursorShape.CrossCursor,
+                        "swipe": Qt.CursorShape.OpenHandCursor,
                         "select": Qt.CursorShape.PointingHandCursor}[self.mode])
 
     def set_preview(self, kind: str | None) -> None:
@@ -164,7 +189,7 @@ class MapCanvas(QWidget):
             self.update()
             self.statusMessage.emit("Drawing cancelled")
         self._zoom_start = self._zoom_end = None
-        if self.mode in ("draw", "measure", "zoom_in", "zoom_out"):
+        if self.mode in ("draw", "measure", "zoom_in", "zoom_out", "swipe"):
             self.set_mode("explore")
         self.update()
 
@@ -181,12 +206,13 @@ class MapCanvas(QWidget):
 
     def finish_measure(self) -> None:
         """Double-click / Enter: the line is finished and stays on the map; the tool stays active."""
-        if len(self.draft) >= 2:
+        area = self.measure_kind == "polygon"
+        if len(self.draft) >= (3 if area else 2):
             self.measure_done = True
             self.update()
             self.measureChanged.emit(list(self.draft), True)
         else:
-            self.statusMessage.emit("A line needs at least two points")
+            self.statusMessage.emit("An area needs at least three points" if area else "A line needs at least two points")
 
     def finish_drawing(self) -> None:
         if self.mode == "measure":
@@ -213,6 +239,10 @@ class MapCanvas(QWidget):
         self._imgs.clear()
         self._paths = None
         self.update()
+
+    def _swipe_x(self) -> float:
+        """Screen x of the Swipe divider."""
+        return max(0.0, min(float(self.width()), self.swipe_frac * self.width()))
 
     # ----- painting ---------------------------------------------------------
     def _image(self, lyr) -> QImage:
@@ -280,6 +310,9 @@ class MapCanvas(QWidget):
         if selected is not None:
             rasters = [lyr for lyr in rasters if lyr.id != selected.id]
             rasters.append(selected)
+        # Swipe: the top raster is shown only to the right of the divider
+        swiped = rasters[-1] if (self.mode == "swipe" and len(rasters) > 1) else None
+        self._swipe_name = swiped.name if swiped is not None else ""
         for lyr in rasters:
             if lyr.rgba is None:
                 continue
@@ -287,7 +320,12 @@ class MapCanvas(QWidget):
             if lyr.id == "hillshade" and ("dem" in vis or "slope" in vis):
                 p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Multiply)
             h, w = lyr.rgba.shape[:2]
+            if lyr is swiped:
+                p.save()
+                p.setClipRect(QRectF((self._swipe_x() - self.ox) / s, -1e7, 1e7, 2e7))
             p.drawImage(QRectF(lyr.col0, 0, w, h), self._image(lyr))
+            if lyr is swiped:
+                p.restore()
             p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         p.setOpacity(1)
 
@@ -374,10 +412,17 @@ class MapCanvas(QWidget):
         # polygon being drawn
         if self.draft:
             pts = [self.to_screen(x, y) for x, y in self.draft]
+            area_mode = self.mode == "measure" and self.measure_kind == "polygon"
+            if area_mode and len(pts) >= 3:                 # Area: shade the shape being measured
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(224, 123, 0, 55))
+                p.drawPolygon(QPolygonF(pts))
             p.setPen(QPen(QColor("#e07b00"), 2))
             p.setBrush(Qt.BrushStyle.NoBrush)
             for a, b in zip(pts, pts[1:]):
                 p.drawLine(a, b)
+            if area_mode and len(pts) >= 3:
+                p.drawLine(pts[-1], pts[0])               # closing edge
             if self.hover is not None and not self.measure_done:
                 dash = QPen(QColor("#e07b00"), 1.5, Qt.PenStyle.DashLine)
                 p.setPen(dash)
@@ -392,6 +437,32 @@ class MapCanvas(QWidget):
             p.setPen(QPen(QColor("#1f6f9a"), 1.5, Qt.PenStyle.DashLine))
             p.setBrush(QColor(31, 111, 154, 40))
             p.drawRect(QRectF(self._zoom_start, self._zoom_end).normalized())
+
+        # swipe divider with its handle and the two side labels
+        if self.mode == "swipe":
+            x, mid = self._swipe_x(), self.height() / 2
+            p.setOpacity(1)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(QColor("#ffffff"), 5))
+            p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
+            p.setPen(QPen(QColor("#1f6f9a"), 2))
+            p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
+            p.setBrush(QColor("#ffffff"))
+            p.drawEllipse(QPointF(x, mid), 16, 16)
+            p.drawText(QRectF(x - 16, mid - 16, 32, 32), Qt.AlignmentFlag.AlignCenter, "↔")
+            fm = p.fontMetrics()
+            for text, right in (("Layers below", False), (self._swipe_name, True)):
+                if not text:
+                    continue
+                tw = fm.horizontalAdvance(text) + 16
+                tx = x + 10 if right else x - 10 - tw
+                if tx < 4 or tx + tw > self.width() - 4:
+                    continue
+                p.setBrush(QColor(255, 255, 255, 225))
+                p.setPen(QPen(QColor("#1f6f9a"), 1))
+                p.drawRoundedRect(QRectF(tx, 10, tw, 24), 4, 4)
+                p.setPen(QColor("#12384f"))
+                p.drawText(QRectF(tx, 10, tw, 24), Qt.AlignmentFlag.AlignCenter, text)
         p.end()
 
     @staticmethod
@@ -406,11 +477,14 @@ class MapCanvas(QWidget):
             if f["polys"]:
                 path = QPainterPath()
                 path.setFillRule(Qt.FillRule.OddEvenFill)
-                for ring in f["polys"]:
-                    path.moveTo(*ring[0])
-                    for pt in ring[1:]:
-                        path.lineTo(*pt)
-                    path.closeSubpath()
+                for poly in f["polys"]:            # each polygon is a list of rings (outer, then holes)
+                    for ring in poly:
+                        if not ring:
+                            continue
+                        path.moveTo(*ring[0])
+                        for pt in ring[1:]:
+                            path.lineTo(*pt)
+                        path.closeSubpath()
                 p.setPen(pen)
                 p.setBrush(QBrush(fill))
                 p.drawPath(path)
@@ -444,6 +518,10 @@ class MapCanvas(QWidget):
 
     def mousePressEvent(self, e) -> None:
         self.setFocus()
+        if (self.mode == "swipe" and e.button() == Qt.MouseButton.LeftButton
+                and abs(e.position().x() - self._swipe_x()) <= 16):
+            self._swipe_drag = True                       # grab the Swipe divider
+            return
         if e.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.MiddleButton):
             self._press = e.position()
             self._dragged = False
@@ -463,6 +541,13 @@ class MapCanvas(QWidget):
         cx, cy = self.to_cell(pos.x(), pos.y())
         self.hover = (cx, cy)
         self.pixelMoved.emit(cx, cy)
+        if self.mode == "swipe":
+            if self._swipe_drag:
+                self.swipe_frac = max(0.02, min(0.98, pos.x() / max(self.width(), 1)))
+                self.update()
+                return
+            near = abs(pos.x() - self._swipe_x()) <= 16
+            self.setCursor(Qt.CursorShape.SplitHCursor if near else Qt.CursorShape.OpenHandCursor)
         if self._zoom_start is not None and e.buttons() & Qt.MouseButton.LeftButton:
             self._zoom_end = pos                      # dragging the zoom box: no panning
             self._last = pos
@@ -504,6 +589,9 @@ class MapCanvas(QWidget):
         self.viewChanged.emit()
 
     def mouseReleaseEvent(self, e) -> None:
+        if self._swipe_drag and e.button() == Qt.MouseButton.LeftButton:
+            self._swipe_drag = False
+            return
         if self._zoom_start is not None and e.button() == Qt.MouseButton.LeftButton:
             self._press = None
             self._dragged = False
@@ -721,10 +809,10 @@ class MapSurface(QWidget):
         head.addWidget(self.live_label)
         g.addLayout(head, 0, 0, 1, 3)
         self.easting_name, self.easting, self.easting_unit = self._coord_row(
-            g, 1, "Easting", "—"
+            g, 1, "X", "—"
         )
         self.northing_name, self.northing, self.northing_unit = self._coord_row(
-            g, 2, "Northing", "—"
+            g, 2, "Y", "—"
         )
         self.ptype = QLabel("—")
         self.ptype.setObjectName("pixelType")
@@ -763,7 +851,7 @@ class MapSurface(QWidget):
         b = QLabel(val)
         b.setObjectName("coordValue")
         b.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        c = QLabel("m")
+        c = QLabel("")
         c.setObjectName("coordUnit")
         g.addWidget(a, row, 0)
         g.addWidget(b, row, 1)
@@ -950,6 +1038,7 @@ class MapSection(QFrame):
         fl.addWidget(dot)
         crs = QLabel(ws.CRS_NAME)
         crs.setObjectName("footerCrs")
+        self.crs_label = crs
         fl.addWidget(crs)
         v.addWidget(foot)
 
@@ -992,8 +1081,8 @@ class MapSection(QFrame):
     # ----- slots ------------------------------------------------------------
     def _mode_changed(self, mode: str) -> None:
         self.tool_label.setText({"explore": "Explore", "draw": "Draw editing region",
-                                 "measure": "Measure distance",
-                                 "zoom_in": "Zoom in", "zoom_out": "Zoom out",
+                                 "measure": "Measure area" if self.canvas.measure_kind == "polygon" else "Measure distance",
+                                 "zoom_in": "Zoom in", "zoom_out": "Zoom out", "swipe": "Swipe",
                                  "select": "Select region"}[mode])
 
     def _pixel_moved(self, cx: float, cy: float) -> None:
@@ -1097,10 +1186,15 @@ class MapSection(QFrame):
     def update_backend_pixel(self, layer_id: str, info: dict) -> None:
         if layer_id != self.selected_layer_id:
             return
+        try:
+            lyr = self.ws.layer(layer_id)
+            label, unit = lyr.value_label, lyr.unit
+        except KeyError:
+            label, unit = "Elevation", "m"
         info = {
             **info,
-            "type": "Elevation",
-            "unit": "m",
+            "type": label,
+            "unit": unit,
         }
         self.update_pixel(info)
 
@@ -1118,16 +1212,30 @@ class MapSection(QFrame):
         self._pending_pixel_sample = None
         self._last_pixel_cell = None
         if lid is None:
-            self.surface.easting_name.setText("Easting")
-            self.surface.northing_name.setText("Northing")
-            self.surface.easting_unit.setText("m")
-            self.surface.northing_unit.setText("m")
+            self._coord_labels(None)
             self.surface.label.setText("No layer selected")
             self.clear_pixel()
             return
         lyr = self.ws.layer(lid)
         self.surface.label.setText(lyr.name)
+        self._coord_labels(lyr)
         self.clear_pixel()
+
+    def _coord_labels(self, lyr) -> None:
+        """Name the two coordinate rows to fit what is selected: X / Y with nothing loaded or a
+        vector file, Longitude / Latitude for a DEM in degrees, Easting / Northing for one in metres."""
+        s = self.surface
+        crs = getattr(lyr, "crs", None) if lyr is not None and not getattr(lyr, "shapes", None) else None
+        if crs and "4326" in str(crs):
+            names = ("Longitude", "Latitude", "\u00b0")
+        elif crs:
+            names = ("Easting", "Northing", "m")
+        else:
+            names = ("X", "Y", "")
+        s.easting_name.setText(names[0])
+        s.northing_name.setText(names[1])
+        s.easting_unit.setText(names[2])
+        s.northing_unit.setText(names[2])
 
     def set_project_name(self, name: str) -> None:
         self.project_name = name          # the tabs show map canvas names, not the file name
@@ -1253,7 +1361,30 @@ class MapSection(QFrame):
         self._next_canvas_number = 2
         self._refresh_tab_buttons()
 
+    def update_crs_label(self) -> None:
+        """Show the CRS of the DEM being worked on, not the sample-data default."""
+        lbl = getattr(self, "crs_label", None)
+        if lbl is None:
+            return
+        canvas = self.canvas
+        lyr = next((l for l in canvas.ws.layers
+                    if l.id == getattr(canvas, "selected_layer_id", None)), None)
+        if lyr is None or getattr(lyr, "crs", None) is None:
+            lyr = next((l for l in canvas.ws.rasters() if getattr(l, "crs", None)), None)
+        crs = getattr(lyr, "crs", None)
+        if not crs:                                   # only a vector file loaded: use its own system
+            vec = next((l for l in canvas.ws.layers if getattr(l, "vec_info", None)), None)
+            crs = ((vec.vec_info.get("meta") or {}).get("crs") if vec else None)
+        if crs:
+            names = {"EPSG:4326": "WGS 84 (EPSG:4326)"}
+            if crs.upper().startswith("EPSG:326"):
+                names[crs.upper()] = f"WGS 84 / UTM {crs[-2:]}N ({crs.upper()})"
+            lbl.setText(names.get(crs.upper(), crs))
+        else:
+            lbl.setText(canvas.ws.CRS_NAME)
+
     def update_scale(self) -> None:
+        self.update_crs_label()
         mpp = self.canvas.meters_per_pixel()
         best = 1.0
         for m in (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000):

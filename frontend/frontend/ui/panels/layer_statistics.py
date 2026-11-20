@@ -2,15 +2,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 import numpy as np
-from PyQt6.QtCore import QMimeData, QPointF, QRectF, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QMimeData, QPoint, QPointF, QRectF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QDrag, QLinearGradient, QPainter, QPen, QPolygonF
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMenu,
@@ -23,6 +25,7 @@ from PyQt6.QtWidgets import (
     QToolButton,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 
 from ui.panels.icon_generator import icon, pixmap
@@ -66,6 +69,31 @@ def fmt(v: float, d: int = 1) -> str:
 # ----------------------------------------------------------------------------
 # data model (no built-in sample data)
 # ----------------------------------------------------------------------------
+def _unit_and_label(tool, name: str) -> tuple[str, str]:
+    """Unit text and value label for a raster layer, from the backend tool that made it."""
+    if tool == "slope":
+        return ("%" if "percent" in name.lower() else "°"), "Slope"
+    if tool == "aspect":
+        return "°", "Aspect"
+    if tool == "hillshade":
+        return "", "Hillshade"        # 0-255 brightness index, no unit
+    if tool == "curvature":
+        return "", "Curvature"
+    return "m", "Elevation"
+
+
+def _value_note(label: str, unit: str) -> str:
+    """Short caption saying what the statistics numbers mean and their unit."""
+    notes = {
+        "Hillshade": "Hillshade: brightness index 0-255 (no unit)",
+        "Curvature": "Curvature: how fast slope changes (no unit shown)",
+        "Aspect": "Aspect: slope direction, degrees clockwise from north",
+        "Slope": "Slope: steepness, " + ("percent (%)" if unit == "%" else "degrees (°)"),
+        "Elevation": "Elevation: height above datum, metres (m)",
+    }
+    return notes.get(label, f"{label} ({unit})" if unit else label)
+
+
 @dataclass
 class Layer:
     id: str
@@ -229,6 +257,44 @@ class SampleWorkspace:
             target["settings"][lid] = (True, src.opacity)
         return True
 
+    # ----- reorder / remove (Layers panel) ------------------------------------
+    def move_layer(self, lid: str, target_lid: str, after: bool) -> bool:
+        """Put a layer just above (or below) another one of this canvas. The top of the list draws on top."""
+        if lid == target_lid:
+            return False
+        src = next((l for l in self.layers if l.id == lid), None)
+        tgt = next((l for l in self.layers if l.id == target_lid), None)
+        if src is None or tgt is None or src.group != tgt.group:
+            return False
+        before = list(self.layers)
+        self.layers.remove(src)
+        i = next(n for n, l in enumerate(self.layers) if l is tgt)
+        self.layers.insert(i + 1 if after else i, src)
+        return before != self.layers
+
+    def shift_layer(self, lid: str, where: str) -> bool:
+        """where: up, down, top or bottom, among the layers of the same kind in this canvas."""
+        src = next((l for l in self.layers if l.id == lid), None)
+        if src is None:
+            return False
+        group = [l for l in self.layers if l.group == src.group]
+        i = group.index(src)
+        j = {"up": i - 1, "down": i + 1, "top": 0, "bottom": len(group) - 1}[where]
+        if not 0 <= j < len(group) or j == i:
+            return False
+        return self.move_layer(lid, group[j].id, after=j > i)
+
+    def remove_layer(self, lid: str) -> Optional[Layer]:
+        """Take a layer out of the project: every canvas, and the list of loaded-but-unused layers."""
+        gone = next((l for l in self.all_layers() if l.id == lid), None)
+        if gone is None:
+            return None
+        for c in self.canvases:
+            c["layers"][:] = [l for l in c["layers"] if l.id != lid]
+            c["settings"].pop(lid, None)
+        self.orphans[:] = [l for l in self.orphans if l.id != lid]
+        return gone
+
     # ----- helpers ----------------------------------------------------------
     def layer(self, lid: str) -> Layer:
         for l in self.all_layers():
@@ -286,6 +352,7 @@ class SampleWorkspace:
             raise ValueError("Backend raster metadata is missing its dimensions.")
         if source_width <= 0 or source_height <= 0:
             raise ValueError("Backend returned invalid raster dimensions.")
+        unit, value_label = _unit_and_label(metadata.get("tool"), name)
         layer = Layer(
             id=layer_id,
             name=name,
@@ -293,6 +360,8 @@ class SampleWorkspace:
             group="raster",
             kind="gray",
             visible=True,
+            unit=unit,
+            value_label=value_label,
             desc=source,
             rgba=np.ascontiguousarray(rgba),
             user_added=True,
@@ -638,6 +707,16 @@ LAYER_MIME = "application/x-agtaam-layer"
 class LayerRow(_Clickable):
     visibilityToggled = pyqtSignal(str, bool)
     menuRequested = pyqtSignal(str, object)
+    renameRequested = pyqtSignal(str)
+
+    def contextMenuEvent(self, e) -> None:
+        self.menuRequested.emit(self.lid, e.globalPos())
+
+    def mouseDoubleClickEvent(self, e) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.renameRequested.emit(self.lid)
+        else:
+            super().mouseDoubleClickEvent(e)
 
     def mousePressEvent(self, e) -> None:
         self._press_pos = e.position().toPoint() if e.button() == Qt.MouseButton.LeftButton else None
@@ -686,18 +765,81 @@ class LayerRow(_Clickable):
         menu = QToolButton()
         menu.setObjectName("layerMenu")
         menu.setText("⋯")
-        menu.setToolTip(f"Statistics for {lyr.name}")
+        menu.setToolTip("Layer options")
         menu.setCursor(Qt.CursorShape.PointingHandCursor)
         menu.clicked.connect(lambda: self.menuRequested.emit(self.lid, menu.mapToGlobal(menu.rect().bottomLeft())))
         lay.addWidget(self.check)
         lay.addWidget(sw)
         lay.addLayout(text, 1)
         lay.addWidget(menu)
-        self.setToolTip(lyr.name)
+        self.setToolTip(f"{lyr.name}\nDrag to reorder \u00b7 Double-click to rename \u00b7 Right-click for more")
 
     def set_selected(self, on: bool) -> None:
         self.setProperty("selected", on)
         _repolish(self)
+
+
+class _TreeBody(QWidget):
+    """The scrolling list of layers. Accepts a dragged layer and drops it between two rows of the same kind."""
+
+    def __init__(self, pane: "ContentsPane") -> None:
+        super().__init__()
+        self.pane = pane
+        self.setAcceptDrops(True)
+        self.line = QFrame(self)
+        self.line.setStyleSheet("background:#1f6f9a; border-radius:1px;")
+        self.line.setFixedHeight(3)
+        self.line.hide()
+
+    def _target(self, pos):
+        """(row id, drop below it?) under the cursor, or None when the layer cannot go here."""
+        src = self.pane.dragging
+        if not src or not self.pane.ws.in_canvas(src):
+            return None
+        group = self.pane.ws.layer(src).group
+        for lid, row in self.pane.rows.items():
+            if not row.isVisible() or not self.pane.ws.in_canvas(lid):
+                continue
+            top = row.mapTo(self, QPoint(0, 0)).y()
+            if top <= pos.y() <= top + row.height():
+                if self.pane.ws.layer(lid).group != group or lid == src:
+                    return None
+                return lid, pos.y() > top + row.height() / 2
+        return None
+
+    def dragEnterEvent(self, e) -> None:
+        if e.mimeData().hasFormat(LAYER_MIME):
+            self.pane.dragging = bytes(e.mimeData().data(LAYER_MIME)).decode("utf-8")
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e) -> None:
+        t = self._target(e.position().toPoint())
+        if t is None:
+            self.line.hide()
+            e.ignore()
+            return
+        lid, below = t
+        row = self.pane.rows[lid]
+        y = row.mapTo(self, QPoint(0, 0)).y() + (row.height() if below else 0)
+        x = row.mapTo(self, QPoint(0, 0)).x()
+        self.line.setGeometry(x, y - 1, row.width(), 3)
+        self.line.show()
+        self.line.raise_()
+        e.acceptProposedAction()
+
+    def dragLeaveEvent(self, e) -> None:
+        self.line.hide()
+
+    def dropEvent(self, e) -> None:
+        self.line.hide()
+        t = self._target(e.position().toPoint())
+        src = self.pane.dragging
+        self.pane.dragging = None
+        if t is None or not src:
+            e.ignore()
+            return
+        e.acceptProposedAction()
+        self.pane.reorder(src, t[0], t[1])
 
 
 class ContentsPane(QFrame):
@@ -705,9 +847,14 @@ class ContentsPane(QFrame):
     visibilityChanged = pyqtSignal(str, bool)
     statisticsRequested = pyqtSignal(str)
     zoomToLayerRequested = pyqtSignal(str)
+    attributeTableRequested = pyqtSignal(str)
     addLayerRequested = pyqtSignal()
     closeRequested = pyqtSignal()
     resetRequested = pyqtSignal()
+    removeRequested = pyqtSignal(str)
+    layerRenamed = pyqtSignal(str, str)
+    layersReordered = pyqtSignal()
+    opacityChanged = pyqtSignal(str, int)
 
     GROUPS = [("raster", "Raster Layers", "grid"), ("vector", "Vector Layers", "vector"),
               ("basemap", "Basemap Layers", "basemap")]
@@ -721,6 +868,8 @@ class ContentsPane(QFrame):
         self.rows: dict[str, LayerRow] = {}
         self.group_boxes: dict[str, QWidget] = {}
         self.legend_widgets: list = []
+        self.dragging: Optional[str] = None
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
 
         # outer = QVBoxLayout(self)
         # outer.setContentsMargins(0, 0, 0, 0)
@@ -801,7 +950,7 @@ class ContentsPane(QFrame):
 
     # ----- tree -------------------------------------------------------------
     def rebuild(self) -> None:
-        body = QWidget()
+        body = _TreeBody(self)
         body.setObjectName("layerTree")
         v = QVBoxLayout(body)
         v.setContentsMargins(6, 0, 6, 10)
@@ -849,6 +998,7 @@ class ContentsPane(QFrame):
                 row.clicked.connect(lambda lid=lyr.id: self._row_clicked(lid))
                 row.visibilityToggled.connect(self.visibilityChanged)
                 row.menuRequested.connect(self._show_menu)
+                row.renameRequested.connect(self.rename)
                 row.set_selected(lyr.id == self.selected)
                 self.rows[lyr.id] = row
                 bl.addWidget(row)
@@ -871,7 +1021,7 @@ class ContentsPane(QFrame):
         lay = QVBoxLayout(w)
         lay.setContentsMargins(34, 2, 8, 6)
         lay.setSpacing(3)
-        cap = QLabel(f"{lyr.value_label} ({lyr.unit})")
+        cap = QLabel(f"{lyr.value_label} ({lyr.unit})" if lyr.unit else lyr.value_label)
         cap.setObjectName("legendCaption")
         lay.addWidget(cap)
         row = QHBoxLayout()
@@ -911,12 +1061,77 @@ class ContentsPane(QFrame):
     def _show_menu(self, lid: str, pos) -> None:
         self.select(lid)
         self.layerSelected.emit(lid)
+        ink = "#244557"
+        lyr = self.ws.layer(lid) if self.ws.has_layer(lid) else None
         m = QMenu(self)
-        m.addAction(icon("stats", "#244557", 18), "Layer statistics",
-                    lambda: self.statisticsRequested.emit(lid))
-        m.addAction(icon("zoom_layer", "#244557", 18), "Zoom to layer",
-                    lambda: self.zoomToLayerRequested.emit(lid))
+        m.addAction(icon("zoom_layer", ink, 18), "Zoom to layer", lambda: self.zoomToLayerRequested.emit(lid))
+        m.addAction(icon("stats", ink, 18), "Layer statistics", lambda: self.statisticsRequested.emit(lid))
+        if lyr is not None and lyr.shapes:                 # a vector file has a table of attributes
+            m.addAction(icon("table", ink, 18), "Attribute table", lambda: self.attributeTableRequested.emit(lid))
+        if lyr is not None and self.ws.in_canvas(lid):
+            m.addSeparator()
+            holder = QWidget()
+            hl = QHBoxLayout(holder)
+            hl.setContentsMargins(14, 4, 14, 4)
+            hl.setSpacing(10)
+            cap = QLabel("Opacity")
+            cap.setStyleSheet("color:#244557;")
+            sl = QSlider(Qt.Orientation.Horizontal)
+            sl.setRange(0, 100)
+            sl.setValue(int(lyr.opacity))
+            sl.setFixedWidth(120)
+            val = QLabel(f"{int(lyr.opacity)}%")
+            val.setFixedWidth(36)
+            val.setStyleSheet("color:#244557; font-weight:600;")
+
+            def changed(v: int, lid=lid, val=val) -> None:
+                val.setText(f"{v}%")
+                self.opacityChanged.emit(lid, v)
+
+            sl.valueChanged.connect(changed)
+            hl.addWidget(cap)
+            hl.addWidget(sl)
+            hl.addWidget(val)
+            wa = QWidgetAction(m)
+            wa.setDefaultWidget(holder)
+            m.addAction(wa)
+        m.addSeparator()
+        m.addAction(icon("label", ink, 18), "Rename\tF2", lambda: self.rename(lid))
+        order = m.addMenu("Order")
+        for text, where, ic in (("Bring to top", "top", "raise"), ("Move up", "up", "raise"),
+                                ("Move down", "down", "lower"), ("Send to bottom", "bottom", "lower")):
+            a = order.addAction(icon(ic, ink, 18), text, lambda w=where: self.shift(lid, w))
+            a.setEnabled(lyr is not None)
+        m.addSeparator()
+        m.addAction(icon("trash", "#b3261e", 18), "Remove\tDel", lambda: self.removeRequested.emit(lid))
         m.exec(pos)
+
+    # ----- rename / reorder / keyboard -----------------------------------------
+    def rename(self, lid: str) -> None:
+        try:
+            lyr = self.ws.layer(lid)
+        except KeyError:
+            return
+        text, ok = QInputDialog.getText(self, "Rename layer", "Layer name:", text=lyr.name)
+        text = text.strip()
+        if ok and text and text != lyr.name:
+            self.layerRenamed.emit(lid, text)
+
+    def shift(self, lid: str, where: str) -> None:
+        if self.ws.shift_layer(lid, where):
+            self.layersReordered.emit()
+
+    def reorder(self, lid: str, target: str, after: bool) -> None:
+        if self.ws.move_layer(lid, target, after):
+            self.layersReordered.emit()
+
+    def keyPressEvent(self, e) -> None:
+        if self.selected and e.key() == Qt.Key.Key_Delete:
+            self.removeRequested.emit(self.selected)
+        elif self.selected and e.key() == Qt.Key.Key_F2:
+            self.rename(self.selected)
+        else:
+            super().keyPressEvent(e)
 
     # ----- public -----------------------------------------------------------
     def select(self, lid: str | None) -> None:
@@ -1069,7 +1284,7 @@ class InspectorPane(QFrame):
 
         if is_raster_view:
             unit = lyr.unit if lyr else ""
-            v.addLayout(self._section_label("Statistics", unit))
+            v.addLayout(self._section_label("Statistics", _value_note(lyr.value_label, unit) if lyr else ""))
             if has_values:
                 cards = [("Minimum", fmt(stats["min"]), unit), ("Maximum", fmt(stats["max"]), unit),
                          ("Mean", fmt(stats["mean"]), unit), ("Std. deviation", fmt(stats["std"]), unit),
@@ -1224,7 +1439,7 @@ class InspectorPane(QFrame):
         return t
 
     # ----- tool settings page -----------------------------------------------
-    def show_tool(self, tool: dict, raster_names: list[str]) -> None:
+    def show_tool(self, tool: dict, raster_names: list[str], wired: bool = True) -> None:
         self.title.setText("Tool Settings")
         self.stack.setCurrentWidget(self.tool_scroll)
         body = QWidget()
@@ -1250,26 +1465,100 @@ class InspectorPane(QFrame):
         form = SettingsForm(tool.get("fields", []), raster_names)
         v.addWidget(form)
         buttons = QHBoxLayout()
-        run = QPushButton(tool.get("run_label", "Run"))
+        self._run_label = tool.get("run_label", "Run")
+        run = QPushButton(self._run_label)
         run.setObjectName("primaryButton")
-        run.clicked.connect(lambda: self.toolRun.emit(tool, form.values()))
+        run.setCursor(Qt.CursorShape.PointingHandCursor)
+        run.clicked.connect(lambda: self._start_run(tool, form))
         cancel = QPushButton("Close")
         cancel.setObjectName("secondaryButton")
+        cancel.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel.clicked.connect(self.toolCancelled)
         buttons.addWidget(run, 1)
         buttons.addWidget(cancel)
         v.addLayout(buttons)
-        note_text = (
-            "Runs this analysis on the selected raster and adds the result as a new layer."
-            if tool.get("handler") == "terrain_derivative"
-            else "Interface preview: settings are captured but no processing is connected yet."
-        )
-        note = QLabel(note_text)
-        note.setObjectName("paneFootnote")
-        note.setWordWrap(True)
-        v.addWidget(note)
+        self._run_btn = run
+        self._run_status = QLabel()
+        self._run_status.setObjectName("runStatus")
+        self._run_status.setWordWrap(True)
+        self._run_status.setTextFormat(Qt.TextFormat.RichText)
+        v.addWidget(self._run_status)
+        self._busy = False
+        self._dots_timer = QTimer(self)
+        self._dots_timer.timeout.connect(self._tick_dots)
+        self._dots = 0
+        needs_layer = any(f.get("type") == "layer" for f in tool.get("fields", []))
+        if needs_layer and not raster_names:
+            run.setEnabled(False)
+            run.setToolTip("Load a raster layer first.")
+            self._set_run_status("warn", "No raster loaded", "Add a raster layer to use this tool.")
+        elif not wired:
+            self._set_run_status("warn", "Preview only", "This tool is not connected to the backend yet.")
+        else:
+            self._set_run_status("", "", "Ready.")
         v.addStretch(1)
         self.tool_scroll.setWidget(body)
+
+
+    # ----- run button behaviour (idle -> working -> done / failed) ----------------
+    def _set_run_status(self, kind: str, pill: str, text: str) -> None:
+        obj = {"info": "runPillInfo", "ok": "runPillOk", "warn": "runPillWarn", "err": "runPillErr"}.get(kind)
+        colours = {"info": ("#e6f1f7", "#1f6f9a"), "ok": ("#e3f4ea", "#1d7a45"),
+                   "warn": ("#fdf0d9", "#9a6410"), "err": ("#fbe4e2", "#b3261e")}
+        html = text
+        if obj:
+            bg, fg = colours[kind]
+            html = (f'<span style="background:{bg}; color:{fg}; font-weight:700;">&nbsp;{pill}&nbsp;</span>'
+                    f'&nbsp; {text}')
+        self._run_status.setText(html)
+
+    def _set_run_state(self, state: str, text: str) -> None:
+        self._run_btn.setProperty("state", state)
+        self._run_btn.setText(text)
+        self._run_btn.style().unpolish(self._run_btn)
+        self._run_btn.style().polish(self._run_btn)
+
+    def _tick_dots(self) -> None:
+        self._dots = (self._dots + 1) % 4
+        self._run_btn.setText("Working" + "." * self._dots)
+
+    def _start_run(self, tool: dict, form) -> None:
+        if self._busy:
+            return
+        self._busy = True
+        self._run_btn.setEnabled(False)
+        self._set_run_state("busy", "Working")
+        self._dots_timer.start(350)
+        self._set_run_status("info", "Running", "Please wait\u2026")
+        QApplication.processEvents()          # let the button repaint before the work starts
+        self.toolRun.emit(tool, form.values())
+        if self._busy:                        # nobody reported back: treat the run as finished
+            self.run_finished(True, "")
+
+    def run_finished(self, ok: bool, message: str = "") -> None:
+        """Called by the main window when a run ends: shows done / failed on the button and below it."""
+        btn = getattr(self, "_run_btn", None)
+        if btn is None or not self._busy:
+            return
+        self._busy = False
+        self._dots_timer.stop()
+        btn.setEnabled(True)
+        if ok:
+            self._set_run_state("done", "\u2713  Done")
+            self._set_run_status("ok", "Done", message or "Finished.")
+            QTimer.singleShot(1500, self._reset_run_button)
+        else:
+            self._set_run_state("fail", "Try again")
+            self._set_run_status("err", "Failed", message or "Something went wrong.")
+
+    def _reset_run_button(self) -> None:
+        btn = getattr(self, "_run_btn", None)
+        if btn is None or self._busy:
+            return
+        try:
+            self._set_run_state("", self._run_label)
+        except RuntimeError:                  # the panel was rebuilt for another tool
+            pass
 
 
 class MapBox(QFrame):

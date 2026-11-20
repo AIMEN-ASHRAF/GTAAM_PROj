@@ -2,10 +2,10 @@
 GROUP = {
     "label": "Quality & Statistics",
     "tools": [
-        dict(id="layer-statistics", label="Layer Statistic & Properties", icon="stats", kind="action",
-             action="show_stats", tip="Layer Statistics & Properties"),
+        dict(id="layer-statistics", label="Layer Statistics", icon="stats", kind="action",
+             action="toggle_stats", tip="Layer Statistics & Properties"),
 
-        dict(id="histogram", label="Histogram", icon="stats", kind="panel",
+        dict(id="histogram", label="Histogram", icon="histogram", kind="panel",
              handler="histogram", run_label="Show histogram",
              result_note="Draws the distribution of pixel values in a chart window.",
              tip="Histogram",
@@ -14,7 +14,7 @@ GROUP = {
                  dict(type="slider", label="Bins", min=10, max=100, value=30),
                  dict(type="check", label="Logarithmic counts", value=False),
              ]),
-        dict(id="nodata-check", label="NoData Check", icon="check", kind="panel",
+        dict(id="nodata-check", label="NoData Check", icon="nodata", kind="panel",
              handler="nodata_check", run_label="Check",
              result_note="Counts empty (NoData) cells and the rows and columns they touch.",
              tip="NoData Check",
@@ -23,7 +23,7 @@ GROUP = {
                  dict(type="info", text="NoData cells are detected automatically from the raster."),
              ]),
 
-        dict(id="outlier-check", label="Outlier Check", icon="eye", kind="panel",
+        dict(id="outlier-check", label="Outlier Check", icon="outlier", kind="panel",
              handler="outlier_check", run_label="Check",
              result_note="Reports cells outside the normal range (IQR rule or Z-score).",
              tip="Outlier Check",

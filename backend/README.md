@@ -90,4 +90,7 @@ Then compare with QGIS: `py scripts/qgis_compare.py out/slope.tif qgis_slope.tif
 - Derived layers exist in memory until exported. Saved projects (`.json`) keep layers that have a file.
 - Slope/aspect/hillshade/curvature use Horn's 3x3 method with real metre cell sizes, also for
   lat/lon DEMs such as AW3D30. Validate against QGIS with `scripts/qgis_compare.py`.
+- Slope has a `method` option like ArcMap: `planar` (default, Horn) or `geodesic` (least-squares
+  plane through the 3x3 cells measured in 3D on the WGS84 ellipsoid, `core/terrain/slope_ellipsoid.py`;
+  on a projected DEM it uses a plane fit in metres). Example: `{"layer_id": "{id}", "units": "degrees", "method": "geodesic"}`.
 - Vector layers: GeoJSON only for now.

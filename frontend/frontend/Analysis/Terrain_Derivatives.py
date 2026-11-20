@@ -17,6 +17,7 @@ GROUP = {
              fields=[
                  dict(type="layer", label="Input DEM"),
                  dict(type="combo", label="Output units", options=["Degrees", "Percent rise"]),
+                 dict(type="combo", label="Method", options=["Planar", "Geodesic"]),
              ]),
         dict(id="an-aspect", label="Aspect", icon="compass", kind="panel",
              handler="terrain_derivative", run_label="Run",
@@ -24,6 +25,7 @@ GROUP = {
              fields=[
                  dict(type="layer", label="Input DEM"),
                  dict(type="check", label="Flat areas as -1", value=True),
+                 dict(type="combo", label="Method", options=["Planar", "Geodesic"]),
              ]),
         dict(id="an-curvature", label="Curvature", icon="contours", kind="panel",
              handler="terrain_derivative", run_label="Run",

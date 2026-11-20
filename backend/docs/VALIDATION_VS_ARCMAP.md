@@ -23,11 +23,12 @@ Projected data is the clean test: no degree-to-metre conversion, so only the for
 |---|---|
 | Aspect | ArcMap (flat cells excluded) Mean 181.49 / Std 100.98; app 181.4 / 99.8. With ArcMap's square-cell assumption the app matches on 100% of pixels. ArcMap writes -1 for flat cells; the app leaves them blank. |
 | Hillshade | ArcMap at Z 1 treats degrees as metres (dark, misleading output: Mean 55.8). The app's formula matches it on 100% of pixels when given the same cell size. With ArcMap Z 0.0000108 the difference from the app is about 1% in mean, because ArcMap assumes square cells. |
-| Slope | ArcMap geographic Mean 12.12 vs app 13.1. Differences come from the degree-to-metre handling, not the formula (the formula matches on the projected DEM). |
+| Slope, GEODESIC | Checked 20 Nov 2026. ArcMap GEODESIC at the native 1" cell size (no resampling): Mean 12.9857 / Std 11.3697 / Max 69.238. App `method=geodesic`: 12.9856 / 11.3697 / 69.238 (interior cells). The earlier plane-fit approximation gave 12.9874 / 11.3715 / 69.242. |
+| Slope, PLANAR | App default `method=planar` (Horn): Mean 13.0895 / Std 11.4287 / Max 69.636, about 0.8% above ArcMap GEODESIC because Horn weights the nearer neighbours double. ArcMap PLANAR at Z factor 1 on degrees is not comparable: it treats degrees as metres. |
 
 ## Degree-to-metre handling
 
-For geographic DEMs the app converts degrees to metres using the WGS84 series at the raster's mid-latitude (`core/raster/crs.py`, `metres_per_degree`). ArcMap uses a fixed value and treats cells as square. The app's cell shape (about 25.8 m x 30.8 m at 33.5 N) is the more accurate one. For comparisons with ArcMap, use a projected DEM.
+For geographic DEMs the app converts degrees to metres using the WGS84 series at each row's own latitude (`core/raster/crs.py`, `cell_size_by_row`). ArcMap uses a fixed value and treats cells as square. The app's cell shape (about 25.8 m x 30.8 m at 33.5 N) is the more accurate one. For comparisons with ArcMap, use a projected DEM, or ArcMap's GEODESIC slope with the app's `method=geodesic`.
 
 ## Distance (geographic DEM, geodesic lengths)
 

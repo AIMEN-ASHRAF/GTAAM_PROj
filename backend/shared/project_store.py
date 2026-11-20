@@ -15,8 +15,8 @@ from shared.layer_store import Layer, layer_store
 
 FORMAT = "A-GTAAM-project"
 FORMAT_VERSION = 3
-EXT = ".agtaam"                       # a JSON file with this extension
-ALLOWED_EXT = {".agtaam", ".json"}    # .json = older projects, still readable
+EXT = ".gtm"                          # a JSON file with this extension
+ALLOWED_EXT = {".gtm", ".agtaam", ".json"}  # .agtaam and .json = older projects, still readable
 
 
 def default_workspace() -> dict:

@@ -7,7 +7,7 @@ from fastapi import APIRouter
 
 from fastapi import Query, Response, status
 from schemas.common import LayerInfo, Message
-from schemas.file_schemas import AddBasemapRequest, AddRasterRequest, AddVectorRequest, ExportElevationsRequest, FullscreenRequest, IdentifyRequest, LayerOrder, LayerUpdate, OpenResult, ProjectInfo, ProjectNew, ProjectPath, ProjectSave, ProjectSaveAs, SaveResult
+from schemas.file_schemas import AddBasemapRequest, AddRasterRequest, AddVectorRequest, ExportElevationsRequest, ExportVectorRequest, FullscreenRequest, IdentifyRequest, LayerOrder, LayerUpdate, OpenResult, ProjectInfo, ProjectNew, ProjectPath, ProjectSave, ProjectSaveAs, SaveResult, VectorLayerNames
 from typing import Literal
 from services import file_service as service
 
@@ -62,7 +62,13 @@ def add_raster(req: AddRasterRequest):
 
 @add_data_router.post("/vector", response_model=LayerInfo, status_code=status.HTTP_201_CREATED)
 def add_vector(req: AddVectorRequest):
-    return service.add_vector(req.path, req.name)
+    return service.add_vector(req.path, req.name, req.layer)
+
+
+@add_data_router.get("/vector-layers", response_model=VectorLayerNames)
+def vector_layers(path: str):
+    """Names of the layers inside a GeoPackage / geodatabase / DXF, so the window can ask which to add."""
+    return VectorLayerNames(layers=service.vector_layers(path))
 
 
 @add_data_router.post("/basemap", response_model=LayerInfo, status_code=status.HTTP_201_CREATED)
@@ -140,8 +146,14 @@ def map_image(layer_id: str, ramp: str = "terrain", vmin: float | None = None,
 
 @export_router.post("/elevations")
 def export_elevations(req: ExportElevationsRequest):
-    """Write the layer's elevations to a GeoTIFF."""
-    return service.export_elevations(req.layer_id, req.path)
+    """Write a raster layer to GeoTIFF, Esri ASCII Grid or XYZ points (csv)."""
+    return service.export_elevations(req.layer_id, req.path, req.format, req.nodata)
+
+
+@export_router.post("/vector")
+def export_vector(req: ExportVectorRequest):
+    """Write a vector layer to GeoJSON, Shapefile, GeoPackage or CSV (points)."""
+    return service.export_vector(req.layer_id, req.path, req.format)
 
 
 @export_router.get("/statistics/{layer_id}")

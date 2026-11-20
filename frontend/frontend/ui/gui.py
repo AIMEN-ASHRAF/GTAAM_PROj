@@ -7,13 +7,15 @@ from pathlib import Path
 import traceback
 from backend_runner import API_PREFIX, BASE_URL, wait_until_ready
 from PyQt6.QtCore import (
-    QEvent, QObject, QPoint, QRunnable, QSize, Qt, QThreadPool, QTimer, pyqtSignal,
+    QEvent, QObject, QPoint, QPointF, QRectF, QRunnable, QSize, Qt, QThreadPool, QTimer, pyqtSignal,
 )
-from PyQt6.QtGui import QIcon, QImage, QKeySequence, QPixmap, QShortcut
+from PyQt6.QtGui import (
+    QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap, QPolygonF, QShortcut,
+)
 from PyQt6.QtWidgets import (
-    QButtonGroup, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
-    QMenu, QScrollArea, QSplitter, QToolButton, QVBoxLayout, QWidget, QApplication,
+    QInputDialog, QMenu, QScrollArea, QSplitter, QToolButton, QVBoxLayout, QWidget, QApplication,
 )
 import httpx
 import numpy as np
@@ -21,6 +23,7 @@ import numpy as np
 from click import group
 from matplotlib.pyplot import box
 from ui.panels.layer_statistics import MapBox
+from ui.panels.attribute_table import AttributeTableWindow
 import Analysis
 import file as file_tab
 import Terrain_Editing
@@ -35,7 +38,7 @@ from ui.panels.map_bar import MapSection
 
 # order of the ribbon tabs
 TAB_MODULES = [file_tab, View, Analysis, Tools, Terrain_Editing, Terrain_Mosaic]
-DEFAULT_TAB = "Terrain Mosaic"
+DEFAULT_TAB = "File"
 NOTE_TEXT = "AI-enabled Geospatial Terrain Analytics & Adaptive Modification"
 PROJECT_TITLE = "Untitled"
 APP_NAME ="GTAAM"
@@ -43,10 +46,10 @@ APP_NAME ="GTAAM"
 # ----------------------------------------------------------------------------
 # backend connection helpers (project files, quality tools)
 # ----------------------------------------------------------------------------
-PROJECT_EXT = ".agtaam"
-PROJECT_FILTER = "A-GTAAM project (*.agtaam);;Older projects (*.json);;All files (*)"
-VECTOR_FILTER = ("Vector files (*.shp *.geojson *.json *.gpkg *.kml *.kmz *.gpx *.gml *.fgb *.csv *.zip);;"
-                 "All files (*)")
+PROJECT_EXT = ".gtm"
+PROJECT_FILTER = "A-GTAAM project (*.gtm);;Older projects (*.agtaam *.json);;All files (*)"
+VECTOR_FILTER = ("Vector files (*.shp *.geojson *.json *.gpkg *.kml *.kmz *.gpx *.gml *.fgb *.csv *.zip "
+                 "*.dxf *.tab *.mif);;All files (*)")
 VECTOR_COLORS = ["#1f6f9a", "#c0392b", "#2e8b57", "#8e44ad", "#d68910", "#16a085"]
 
 
@@ -70,29 +73,170 @@ def _quality_source(win, values: dict):
     return src
 
 
-class HistogramDialog(QDialog):
+_QUALITY_EXTRA = """
+    QLabel#qTitle { color: #1b2530; font-size: 15px; font-weight: 700; }
+    QLabel#qSub { color: #6b737b; font-size: 11px; }
+    QLabel#qBig { color: #1b2530; font-size: 24px; font-weight: 700; }
+    QLabel#qPillOk { background: #e3f4ea; color: #1d7a45; border-radius: 9px; padding: 3px 10px; font-size: 11px; font-weight: 700; }
+    QLabel#qPillWarn { background: #fdf0d9; color: #9a6410; border-radius: 9px; padding: 3px 10px; font-size: 11px; font-weight: 700; }
+    QLabel#qStatName { color: #6b737b; font-size: 10px; font-weight: 700; letter-spacing: 1px; }
+    QLabel#qStatValue { color: #1b2530; font-size: 14px; font-weight: 700; }
+    QPushButton#qClose { background: #1f6f9a; color: white; border: none; border-radius: 8px; padding: 7px 22px; font-weight: 600; }
+    QPushButton#qClose:hover { background: #185a7f; }
+"""
+
+
+def _quality_header(layout, title: str, layer: str, pill: tuple[str, str] | None = None) -> None:
+    """Title, layer subtitle and an optional status pill at the top of a Quality & Statistics window."""
+    row = QHBoxLayout()
+    col = QVBoxLayout()
+    col.setSpacing(1)
+    t = QLabel(title)
+    t.setObjectName("qTitle")
+    sub = QLabel(layer)
+    sub.setObjectName("qSub")
+    col.addWidget(t)
+    col.addWidget(sub)
+    row.addLayout(col, 1)
+    if pill:
+        p = QLabel(pill[0])
+        p.setObjectName("qPillOk" if pill[1] == "ok" else "qPillWarn")
+        row.addWidget(p, 0, Qt.AlignmentFlag.AlignTop)
+    layout.addLayout(row)
+
+
+def _quality_stat_grid(rows: list[tuple[str, str]], columns: int = 2) -> QGridLayout:
+    grid = QGridLayout()
+    grid.setHorizontalSpacing(28)
+    grid.setVerticalSpacing(12)
+    for i, (name, value) in enumerate(rows):
+        cell = QVBoxLayout()
+        cell.setSpacing(1)
+        n = QLabel(name.upper())
+        n.setObjectName("qStatName")
+        v = QLabel(value)
+        v.setObjectName("qStatValue")
+        cell.addWidget(n)
+        cell.addWidget(v)
+        grid.addLayout(cell, i // columns, i % columns)
+    return grid
+
+
+class _QualityDialogBase(QDialog):
+    def __init__(self, parent, title: str) -> None:
+        super().__init__(parent)
+        self.setObjectName("measureWindow")
+        self.setWindowTitle(title)
+        self.setStyleSheet(MeasureWindow.style() + _QUALITY_EXTRA)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(14, 14, 14, 14)
+        card = QFrame()
+        card.setObjectName("measureCard")
+        outer.addWidget(card)
+        self.body = QVBoxLayout(card)
+        self.body.setContentsMargins(18, 16, 18, 16)
+        self.body.setSpacing(12)
+        self._footer = outer
+
+    def add_close(self) -> None:
+        btn = QPushButton("Close")
+        btn.setObjectName("qClose")
+        btn.clicked.connect(self.accept)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(btn)
+        self._footer.addLayout(row)
+
+
+class HistogramDialog(_QualityDialogBase):
     """Bar chart of a layer's value distribution (counts per bin)."""
 
     def __init__(self, parent, name: str, res: dict, log: bool) -> None:
-        super().__init__(parent)
+        super().__init__(parent, f"Histogram \u00b7 {name}")
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
         from matplotlib.figure import Figure
+        from matplotlib.ticker import FuncFormatter
 
-        self.setWindowTitle(f"Histogram · {name}")
-        self.resize(720, 460)
+        self.resize(760, 560)
         edges = np.asarray(res["bin_edges"], dtype=float)
         counts = np.asarray(res["counts"], dtype=float)
-        fig = Figure(figsize=(7, 4.4), tight_layout=True)
+        _quality_header(self.body, "Histogram", name)
+        self.body.addLayout(_quality_stat_grid([
+            ("Pixels counted", f"{int(res['pixels']):,}"),
+            ("Bins", f"{int(res['bins'])}"),
+            ("Lowest value", f"{edges[0]:,.2f}"),
+            ("Highest value", f"{edges[-1]:,.2f}"),
+        ], columns=4))
+        rule = QFrame()
+        rule.setObjectName("measureRule")
+        self.body.addWidget(rule)
+
+        fig = Figure(figsize=(7, 4.2), tight_layout=True, facecolor="white")
         ax = fig.add_subplot(111)
         ax.bar(edges[:-1], counts, width=np.diff(edges), align="edge",
-               color="#495057", edgecolor="#f8f9fa", linewidth=0.4)
+               color="#1f6f9a", edgecolor="white", linewidth=0.5)
         if log:
             ax.set_yscale("log")
-        ax.set_xlabel("Value")
-        ax.set_ylabel("Pixel count" + (" (log)" if log else ""))
-        ax.set_title(f"{name} · {res['bins']} bins · {res['pixels']:,} pixels")
+        ax.set_xlabel("Pixel value", color="#5b6670", fontsize=9)
+        ax.set_ylabel("Number of pixels" + (" (log scale)" if log else ""), color="#5b6670", fontsize=9)
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:,.0f}"))
+        ax.tick_params(colors="#5b6670", labelsize=8)
+        ax.grid(axis="y", color="#e6eaee", linewidth=0.8)
+        ax.set_axisbelow(True)
         ax.spines[["top", "right"]].set_visible(False)
-        QVBoxLayout(self).addWidget(FigureCanvasQTAgg(fig))
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color("#cfd6dc")
+        self.body.addWidget(FigureCanvasQTAgg(fig), 1)
+        self.add_close()
+
+
+class NoDataDialog(_QualityDialogBase):
+    def __init__(self, parent, name: str, r: dict, width, height) -> None:
+        super().__init__(parent, f"NoData Check \u00b7 {name}")
+        self.resize(460, 330)
+        clean = r["status"] == "clean"
+        _quality_header(self.body, "NoData Check", name,
+                        ("No NoData found", "ok") if clean else ("Contains NoData", "warn"))
+        big = QLabel(f"{r['percent']}%")
+        big.setObjectName("qBig")
+        self.body.addWidget(big)
+        note = QLabel("of the cells are empty (NoData)" if not clean else "of the cells are empty \u2014 the raster is complete")
+        note.setObjectName("qSub")
+        self.body.addWidget(note)
+        rule = QFrame()
+        rule.setObjectName("measureRule")
+        self.body.addWidget(rule)
+        rows = [("NoData cells", f"{r['nodata_count']:,} of {r['total']:,}"),
+                ("Raster size", f"{width:,} \u00d7 {height:,}" if width and height else "\u2014"),
+                ("Rows touched", f"{r['rows_affected']:,}" + (f" of {height:,}" if height else "")),
+                ("Columns touched", f"{r['columns_affected']:,}" + (f" of {width:,}" if width else ""))]
+        self.body.addLayout(_quality_stat_grid(rows))
+        self.add_close()
+
+
+class OutlierDialog(_QualityDialogBase):
+    def __init__(self, parent, name: str, r: dict, method: str) -> None:
+        super().__init__(parent, f"Outlier Check \u00b7 {name}")
+        self.resize(480, 360)
+        none = r["outlier_count"] == 0
+        _quality_header(self.body, "Outlier Check", name,
+                        ("No outliers", "ok") if none else ("Outliers found", "warn"))
+        big = QLabel(f"{r['outlier_count']:,}")
+        big.setObjectName("qBig")
+        self.body.addWidget(big)
+        note = QLabel(f"cells outside the normal range ({r['percent']}% of valid cells)")
+        note.setObjectName("qSub")
+        self.body.addWidget(note)
+        rule = QFrame()
+        rule.setObjectName("measureRule")
+        self.body.addWidget(rule)
+        lo = f"{r['lowest_outlier']:,.2f}" if r["lowest_outlier"] is not None else "\u2014"
+        hi = f"{r['highest_outlier']:,.2f}" if r["highest_outlier"] is not None else "\u2014"
+        rows = [("Method", f"{'IQR' if method == 'iqr' else 'Z-score'} (threshold {r['threshold']})"),
+                ("Normal range", f"{r['lower_bound']:,.2f} to {r['upper_bound']:,.2f}"),
+                ("Lowest outlier", lo), ("Highest outlier", hi)]
+        self.body.addLayout(_quality_stat_grid(rows))
+        self.add_close()
 
 
 class _PixelSampleSignals(QObject):
@@ -304,6 +448,62 @@ class BackendStatus(QLabel):
                            f" border-radius:10px; padding:2px 10px; font-size:12px; font-weight:600; }}")
 
 
+def _friendly_error(exc: Exception) -> str:
+    """One readable sentence for the status line under a Run button."""
+    text = str(exc).strip() or exc.__class__.__name__
+    return text if len(text) <= 160 else text[:157] + "\u2026"
+
+
+class VectorLayerChooser(QDialog):
+    """A GeoPackage, geodatabase or DXF can hold many layers: tick the ones to add."""
+
+    def __init__(self, parent, file_name: str, names: list[str]) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Add vector layers")
+        self.setModal(True)
+        self.setObjectName("measureWindow")
+        self.setStyleSheet(MeasureWindow.style() + _QUALITY_EXTRA)
+        self.setMinimumWidth(380)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(14, 14, 14, 14)
+        card = QFrame()
+        card.setObjectName("measureCard")
+        outer.addWidget(card)
+        v = QVBoxLayout(card)
+        v.setContentsMargins(18, 16, 18, 16)
+        v.setSpacing(10)
+        v.addWidget(_card_title("Choose layers"))
+        sub = QLabel(f"{file_name} holds {len(names)} layers. Tick the ones to add to the map.")
+        sub.setObjectName("qSub")
+        sub.setWordWrap(True)
+        v.addWidget(sub)
+        self.list = QListWidget()
+        self.list.setStyleSheet("QListWidget { border: 1px solid #dde2e7; border-radius: 8px; padding: 4px; }"
+                                "QListWidget::item { padding: 5px 6px; }")
+        for n in names:
+            it = QListWidgetItem(n)
+            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            it.setCheckState(Qt.CheckState.Checked if len(names) <= 5 else Qt.CheckState.Unchecked)
+            self.list.addItem(it)
+        v.addWidget(self.list)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        cancel = QPushButton("Cancel")
+        cancel.setObjectName("secondaryButton")
+        cancel.clicked.connect(self.reject)
+        ok = QPushButton("Add")
+        ok.setObjectName("primaryButton")
+        ok.setDefault(True)
+        ok.clicked.connect(self.accept)
+        row.addWidget(cancel)
+        row.addWidget(ok)
+        v.addLayout(row)
+
+    def chosen(self) -> list[str]:
+        return [self.list.item(i).text() for i in range(self.list.count())
+                if self.list.item(i).checkState() == Qt.CheckState.Checked]
+
+
 class ToolDialog(QDialog):
     def __init__(self, parent, tool: dict, raster_names: list[str]) -> None:
         super().__init__(parent)
@@ -464,14 +664,67 @@ class ProjectNameDialog(QDialog):
         self.accept()
 
 
+def _card_title(text: str) -> QLabel:
+    """Centred heading at the top of a measure window's card."""
+    t = QLabel(text)
+    t.setObjectName("measureTitle")
+    t.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+    return t
+
+
 class MeasureWindow(QDialog):
     """A small floating Measure box, like ArcMap's: it updates as points are clicked and has a
     units menu. Segment is the last straight piece, Length is the whole line."""
-    unitsChanged = pyqtSignal(str)          # backend unit name: auto, metres, kilometres, feet, miles
+    unitsChanged = pyqtSignal(str)          # backend unit name: metres, kilometres, feet, miles
     closed = pyqtSignal()
 
-    UNITS = [("Automatic", "auto"), ("Metres", "metres"), ("Kilometres", "kilometres"),
-             ("Feet", "feet"), ("Miles", "miles")]
+    UNITS = [("Metres", "metres"), ("Kilometres", "kilometres"), ("Feet", "feet"), ("Miles", "miles")]
+    DEFAULT_UNIT = "kilometres"
+
+    STYLE = """
+            QDialog#measureWindow { background: #eef1f4; }
+            QFrame#measureCard { background: #ffffff; border: 1px solid #dde2e7; border-radius: 12px; }
+            QLabel#measureMethod { color: #1b2530; font-size: 13px; font-weight: 700; }
+            QLabel#measureLayer { color: #6b737b; font-size: 11px; }
+            QLabel#measureHint { color: #2f6585; font-size: 12px; background: #eaf3f8; border-radius: 7px; padding: 7px 9px; }
+            QLabel#measureSection { color: #6b737b; font-size: 10px; font-weight: 700; letter-spacing: 1px; }
+            QLabel#measureName { color: #5b6670; font-size: 12px; }
+            QLabel#measureValue { color: #1b2530; font-size: 13px; font-weight: 700; }
+            QLabel#measureBig { color: #1f6f9a; font-size: 15px; font-weight: 700; }
+            QLabel#measureTitle { color: #1b2530; font-size: 15px; font-weight: 700; padding-bottom: 2px; }
+            QLabel#measureHero { color: #1f6f9a; font-size: 24px; font-weight: 700; }
+            QLabel#measureCaption { color: #8a949c; font-size: 11px; }
+            QLabel#measureNote { color: #7a6a3a; font-size: 11px; }
+            QFrame#measureRule { background: #edf0f3; max-height: 1px; min-height: 1px; border: none; }
+            QCheckBox#measureName { color: #5b6670; font-size: 12px; spacing: 6px; }
+            QComboBox { background: #f6f8fa; color: #1b2530; border: 1px solid #cfd6dc; border-radius: 8px;
+                        padding: 5px 30px 5px 10px; min-height: 20px; font-size: 12px; }
+            QComboBox:hover, QComboBox:on { background: #ffffff; border-color: #1f6f9a; }
+            QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: center right; width: 26px;
+                                   border: none; border-left: 1px solid #e1e5e9;
+                                   border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
+            QComboBox::down-arrow { image: url(__CHEVRON__); width: 12px; height: 8px; }
+            QComboBox QAbstractItemView { background: #ffffff; color: #1b2530; border: 1px solid #cfd6dc;
+                                          selection-background-color: #e6f1f7; selection-color: #1f6f9a; padding: 4px; outline: 0; }
+    """
+
+    @classmethod
+    def style(cls) -> str:
+        """The style sheet with the drop-down arrow filled in (a small arrow image is drawn once into the temp folder)."""
+        import tempfile
+        path = Path(tempfile.gettempdir()) / "gtaam_combo_arrow.png"
+        try:
+            pm = QPixmap(12, 8)
+            pm.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pm)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(QPen(QColor("#495057"), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            painter.drawPolyline(QPolygonF([QPointF(1.5, 1.8), QPointF(6, 6.2), QPointF(10.5, 1.8)]))
+            painter.end()
+            pm.save(str(path), "PNG")
+        except Exception:
+            pass
+        return cls.STYLE.replace("__CHEVRON__", path.as_posix())
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
@@ -480,20 +733,7 @@ class MeasureWindow(QDialog):
         self.setWindowFlag(Qt.WindowType.Tool, True)
         self.setModal(False)
         self.setMinimumWidth(310)
-        self.setStyleSheet("""
-            QDialog#measureWindow { background: #e4e7ea; }
-            QFrame#measureCard { background: #f4f5f6; border: 1px solid #d0d4d8; border-radius: 10px; }
-            QLabel#measureMethod { color: #252a2f; font-size: 12px; font-weight: 700; }
-            QLabel#measureLayer { color: #6b737b; font-size: 11px; }
-            QLabel#measureHint { color: #626a72; font-size: 12px; }
-            QLabel#measureSection { color: #6b737b; font-size: 10px; font-weight: 700; letter-spacing: 1px; }
-            QLabel#measureName { color: #495057; font-size: 12px; }
-            QLabel#measureValue { color: #252a2f; font-size: 13px; font-weight: 700; }
-            QLabel#measureBig { color: #1f6f9a; font-size: 13px; font-weight: 700; }
-            QLabel#measureNote { color: #7a6a3a; font-size: 11px; }
-            QFrame#measureRule { background: #dfe3e6; max-height: 1px; min-height: 1px; border: none; }
-            QComboBox { background: #ffffff; border: 1px solid #c5cbd1; border-radius: 6px; padding: 3px 8px; }
-        """)
+        self.setStyleSheet(self.style())
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 10, 10)
         card = QFrame()
@@ -502,12 +742,14 @@ class MeasureWindow(QDialog):
         body.setContentsMargins(14, 12, 14, 12)
         body.setSpacing(5)
 
+        body.addWidget(_card_title("Distance"))
         top = QHBoxLayout()
         units_label = QLabel("Units")
         units_label.setObjectName("measureName")
         self.units = QComboBox()
         for text, key in self.UNITS:
             self.units.addItem(text, key)
+        self.units.setCurrentIndex(max(0, self.units.findData(self.DEFAULT_UNIT)))
         self.units.currentIndexChanged.connect(lambda _i: self.unitsChanged.emit(self.units.currentData()))
         top.addWidget(units_label)
         top.addWidget(self.units, 1)
@@ -520,8 +762,6 @@ class MeasureWindow(QDialog):
         self.hint = QLabel("Click the first point on the map.")
         self.hint.setObjectName("measureHint")
         self.hint.setWordWrap(True)
-        body.addWidget(self.method)
-        body.addWidget(self.layer)
         body.addWidget(self.hint)
 
         self.rows: dict[str, tuple[QLabel, QLabel]] = {}
@@ -559,12 +799,12 @@ class MeasureWindow(QDialog):
         return line
 
     def set_layer(self, name: str, geographic: bool) -> None:
-        self.method.setText(f"Line measurement ({'Geodesic' if geographic else 'Planar'})")
+        self.method.setText("Distance")
         self.layer.setText(name)
 
     def show_waiting(self, text: str = "Click the first point on the map.") -> None:
         self.hint.setText(text)
-        self.hint.show()
+        self.hint.setVisible(type(self).__name__ not in _HINTS_SEEN)
         self.result_box.hide()
         self.adjustSize()
 
@@ -573,7 +813,9 @@ class MeasureWindow(QDialog):
         d = 3 if unit in ("km", "mi") else 2
         self.hint.setText("Double-click to finish \u00b7 Right-click removes the last point" if not finished
                           else "Line finished. Click the map to measure a new line.")
-        self.hint.show()
+        self.hint.setVisible(type(self).__name__ not in _HINTS_SEEN)
+        if finished:
+            _HINTS_SEEN.add(type(self).__name__)       # the tips are shown once, then stay out of the way
         self.rows["segment"][1].setText(f"{res['segments'][-1]:,.{d}f} {unit}")
         self.rows["length"][1].setText(f"{res['total']:,.{d}f} {unit}")
         el = res.get("elevation")
@@ -588,6 +830,456 @@ class MeasureWindow(QDialog):
             self.rows["start"][1].setText(f"{el['start']:,.{ed}f} {eu}")
             self.rows["end"][1].setText(f"{el['end']:,.{ed}f} {eu}")
             self.rows["diff"][1].setText(f"{el['difference']:+,.{ed}f} {eu}")
+        self.result_box.show()
+        self.adjustSize()
+
+    def closeEvent(self, e) -> None:
+        self.closed.emit()
+        super().closeEvent(e)
+
+    def reject(self) -> None:           # Esc or the close button
+        self.close()
+
+
+class ProfileChart(QWidget):
+    """Draws distance (across) against height (up) for the profile line. Move the mouse over it to read values."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setMinimumSize(470, 250)
+        self.setMouseTracking(True)
+        self.res: dict | None = None
+        self.true_scale = False
+        self._hover: int | None = None
+
+    def set_result(self, res: dict | None, true_scale: bool) -> None:
+        self.res, self.true_scale, self._hover = res, true_scale, None
+        self.update()
+
+    def _data_range(self):
+        """Lowest and highest height on the line, with a little room above and below."""
+        el = [v for v in self.res["elevation"] if v is not None]
+        lo, hi = min(el), max(el)
+        if hi - lo < 1e-9:
+            lo, hi = lo - 1, hi + 1
+        pad = (hi - lo) * 0.08
+        return lo - pad, hi + pad
+
+    # plot rectangle inside the widget (room for axis labels)
+    def _plot(self) -> QRectF:
+        base = QRectF(66, 14, max(10, self.width() - 66 - 18), max(10, self.height() - 14 - 46))
+        if self.true_scale and self.res and any(v is not None for v in self.res["elevation"]):
+            # True scale: the box itself gets the real shape (same metres per pixel across and up),
+            # so a long, low line gives a short, wide box and the height axis never shows empty
+            # heights below the ground. A very steep short line is kept within the normal box.
+            lo, hi = self._data_range()
+            total_m = max(self.res.get("total_distance_m") or 1.0, 1e-9)
+            h = base.width() * (hi - lo) / total_m
+            h = min(base.height(), max(14.0, h))
+            return QRectF(base.left(), base.top() + (base.height() - h) / 2, base.width(), h)
+        return base
+
+    def _range(self):
+        return self._data_range()
+
+    def _xy(self, i: int, lo: float, hi: float):
+        plot, dist = self._plot(), self.res["distance"]
+        total = dist[-1] or 1.0
+        z = self.res["elevation"][i]
+        x = plot.left() + dist[i] / total * plot.width()
+        y = None if z is None else plot.bottom() - (z - lo) / (hi - lo) * plot.height()
+        return x, y
+
+    def mouseMoveEvent(self, e) -> None:
+        if not self.res:
+            return
+        plot, dist = self._plot(), self.res["distance"]
+        frac = (e.position().x() - plot.left()) / plot.width()
+        if 0 <= frac <= 1:
+            target = frac * (dist[-1] or 1.0)
+            self._hover = min(range(len(dist)), key=lambda k: abs(dist[k] - target))
+        else:
+            self._hover = None
+        self.update()
+
+    def leaveEvent(self, e) -> None:
+        self._hover = None
+        self.update()
+
+    @staticmethod
+    def _nice_ticks(lo: float, hi: float, target: int):
+        """Round tick values (1, 2, 2.5, 5 x 10^n) between lo and hi, and how many decimals they need."""
+        import math
+        span = max(hi - lo, 1e-12)
+        raw = span / max(target, 1)
+        mag = 10 ** math.floor(math.log10(raw))
+        step = next(m * mag for m in (1, 2, 2.5, 5, 10) if raw <= m * mag * (1 + 1e-9))
+        decimals = 0
+        while abs(step * 10 ** decimals - round(step * 10 ** decimals)) > 1e-9 and decimals < 4:
+            decimals += 1
+        v = math.ceil(lo / step - 1e-9) * step
+        ticks = []
+        while v <= hi + step * 1e-9:
+            ticks.append(v)
+            v += step
+        return ticks, decimals
+
+    def paintEvent(self, e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.fillRect(self.rect(), QColor("#ffffff"))
+        plot = self._plot()
+        if not self.res or all(v is None for v in self.res["elevation"]):
+            p.setPen(QPen(QColor("#dde2e7"), 1))
+            p.drawRect(plot)
+            p.setPen(QColor("#6b737b"))
+            p.drawText(plot, Qt.AlignmentFlag.AlignCenter,
+                       "No elevation data under this line." if self.res else "Draw a line on the map.")
+            return
+        lo, hi = self._range()
+        total, unit = self.res["distance"][-1] or 1.0, self.res.get("distance_units", "m")
+        small = QFont(self.font())
+        small.setPointSizeF(8)
+        p.setFont(small)
+        axis_ink, grid = QColor("#5b6670"), QColor("#eef1f4")
+
+        # grid and tick labels at round numbers
+        y_ticks, y_dec = self._nice_ticks(lo, hi, max(2, int(plot.height() // 42)))
+        last_y = None
+        for v in y_ticks:
+            y = plot.bottom() - (v - lo) / (hi - lo) * plot.height()
+            p.setPen(QPen(grid, 1))
+            p.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
+            if last_y is None or abs(last_y - y) >= 13:
+                p.setPen(axis_ink)
+                p.drawText(QRectF(0, y - 8, plot.left() - 6, 16),
+                           Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"{v:,.{y_dec}f}")
+                last_y = y
+        x_ticks, x_dec = self._nice_ticks(0.0, total, max(2, int(plot.width() // 60)))
+        for v in x_ticks:
+            x = plot.left() + v / total * plot.width()
+            p.setPen(QPen(grid, 1))
+            p.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
+            p.setPen(axis_ink)
+            p.drawText(QRectF(x - 30, plot.bottom() + 4, 60, 14), Qt.AlignmentFlag.AlignHCenter, f"{v:,.{x_dec}f}")
+        p.setPen(QPen(QColor("#cfd6dc"), 1))             # only the left and bottom edges, no heavy box
+        p.drawLine(plot.bottomLeft(), plot.bottomRight())
+        p.drawLine(plot.topLeft(), plot.bottomLeft())
+
+        # axis titles say what the numbers mean
+        title_font = QFont(self.font())
+        title_font.setPointSizeF(8.5)
+        title_font.setBold(True)
+        p.setFont(title_font)
+        p.setPen(axis_ink)
+        x_title = f"Distance along the line ({unit})" + ("  \u00b7  true scale: 1 m up = 1 m across" if self.true_scale else "")
+        p.drawText(QRectF(plot.left() - 40, plot.bottom() + 22, plot.width() + 40, 16), Qt.AlignmentFlag.AlignCenter, x_title)
+        p.save()
+        p.translate(11, plot.center().y())
+        p.rotate(-90)
+        p.drawText(QRectF(-90, -9, 180, 18), Qt.AlignmentFlag.AlignCenter, "Elevation (m)")
+        p.restore()
+        p.setFont(small)
+
+        # filled area under the line, then the line (a gap in the data breaks the line)
+        runs, run = [], []
+        for i in range(len(self.res["elevation"])):
+            x, y = self._xy(i, lo, hi)
+            if y is None:
+                if run:
+                    runs.append(run)
+                run = []
+            else:
+                run.append(QPointF(x, y))
+        if run:
+            runs.append(run)
+        for r in runs:
+            poly = QPolygonF(r + [QPointF(r[-1].x(), plot.bottom()), QPointF(r[0].x(), plot.bottom())])
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(31, 111, 154, 46))
+            p.drawPolygon(poly)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(QColor("#1f6f9a"), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            p.drawPolyline(QPolygonF(r))
+
+        # A and B mark the two ends of the line
+        pts = [(i, self._xy(i, lo, hi)) for i in range(len(self.res["elevation"]))]
+        pts = [(i, xy) for i, xy in pts if xy[1] is not None]
+        if pts:
+            letter_font = QFont(self.font())
+            letter_font.setPointSizeF(7.5)
+            letter_font.setBold(True)
+            for letter, (_i, (x, y)) in (("A", pts[0]), ("B", pts[-1])):
+                p.setPen(QPen(QColor("#ffffff"), 1.5))
+                p.setBrush(QColor("#1b2530"))
+                p.drawEllipse(QPointF(x, y), 7, 7)
+                p.setFont(letter_font)
+                p.setPen(QColor("#ffffff"))
+                p.drawText(QRectF(x - 7, y - 7, 14, 14), Qt.AlignmentFlag.AlignCenter, letter)
+
+        if self._hover is not None:
+            x, y = self._xy(self._hover, lo, hi)
+            p.setFont(small)
+            p.setPen(QPen(QColor("#8a949c"), 1, Qt.PenStyle.DashLine))
+            p.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
+            if y is not None:
+                p.setPen(QPen(QColor("#ffffff"), 1.5))
+                p.setBrush(QColor("#c2571a"))
+                p.drawEllipse(QPointF(x, y), 4, 4)
+                text = f"{self.res['elevation'][self._hover]:,.1f} m  at  {self.res['distance'][self._hover]:,.2f} {unit}"
+                box_y = plot.top() + 4 if plot.height() >= 60 else plot.top() - 24     # above a short box
+                box = QRectF(min(x + 8, plot.right() - 190), box_y, 186, 18)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(37, 42, 47, 220))
+                p.drawRoundedRect(box, 4, 4)
+                p.setPen(QColor("#ffffff"))
+                p.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+
+
+class ProfileWindow(QDialog):
+    """Floating Elevation Profile box: the height along the clicked line, with min, max, climb and slope."""
+    unitsChanged = pyqtSignal(str)
+    scaleChanged = pyqtSignal()
+    closed = pyqtSignal()
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setObjectName("measureWindow")
+        self.setWindowTitle("Elevation Profile")
+        self.setWindowFlag(Qt.WindowType.Tool, True)
+        self.setModal(False)
+        self.setStyleSheet(MeasureWindow.style())
+        self.res: dict | None = None
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 10, 10, 10)
+        card = QFrame()
+        card.setObjectName("measureCard")
+        body = QVBoxLayout(card)
+        body.setContentsMargins(14, 12, 14, 12)
+        body.setSpacing(6)
+
+        body.addWidget(_card_title("Elevation Profile"))
+        top = QHBoxLayout()
+        units_label = QLabel("Distance units")
+        units_label.setObjectName("measureName")
+        self.units = QComboBox()
+        for text, key in MeasureWindow.UNITS:
+            self.units.addItem(text, key)
+        self.units.setCurrentIndex(max(0, self.units.findData(MeasureWindow.DEFAULT_UNIT)))
+        self.units.currentIndexChanged.connect(lambda _i: self.unitsChanged.emit(self.units.currentData()))
+        self.true_scale = QCheckBox("True scale (no vertical exaggeration)")
+        self.true_scale.setObjectName("measureName")
+        self.true_scale.toggled.connect(lambda _c: self._redraw())
+        top.addWidget(units_label)
+        top.addWidget(self.units)
+        top.addStretch(1)
+        if SHOW_TRUE_SCALE:
+            top.addWidget(self.true_scale)
+        body.addLayout(top)
+
+        self.layer = QLabel("")
+        self.layer.setObjectName("measureLayer")
+        self.rows: dict[str, QLabel] = {}
+        self.hero = QWidget()                      # the length is the headline number
+        hero_row = QHBoxLayout(self.hero)
+        hero_row.setContentsMargins(0, 2, 0, 0)
+        hero_row.setSpacing(8)
+        self.rows["length"] = QLabel("")
+        self.rows["length"].setObjectName("measureHero")
+        self.method = QLabel("Length")
+        self.method.setObjectName("measureCaption")
+        hero_row.addWidget(self.rows["length"])
+        hero_row.addWidget(self.method, 0, Qt.AlignmentFlag.AlignBottom)
+        hero_row.addStretch(1)
+        body.addWidget(self.hero)
+
+        self.chart = ProfileChart()
+        body.addWidget(self.chart)
+
+        self.result_box = QWidget()
+        grid = QGridLayout(self.result_box)
+        grid.setContentsMargins(0, 4, 0, 0)
+        grid.setHorizontalSpacing(22)
+        grid.setVerticalSpacing(5)
+        fields = (("min", "Lowest"), ("max", "Highest"), ("start", "Start height (A)"), ("end", "End height (B)"),
+                  ("gain", "Total climb"), ("loss", "Total descent"))
+        for n, (key, name) in enumerate(fields):
+            a = QLabel(name)
+            a.setObjectName("measureName")
+            b = QLabel("")
+            b.setObjectName("measureValue")
+            b.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            grid.addWidget(a, n // 2, (n % 2) * 2)
+            grid.addWidget(b, n // 2, (n % 2) * 2 + 1)
+            self.rows[key] = b
+        self.note = QLabel("")
+        self.note.setObjectName("measureNote")
+        self.note.setWordWrap(True)
+        body.addWidget(self.result_box)
+        body.addWidget(self.note)
+        outer.addWidget(card)
+        self.show_waiting()
+
+    def set_layer(self, name: str, geographic: bool) -> None:
+        self.method.setText("Length")
+        self.layer.setText(name)
+
+    def show_waiting(self, text: str = "Click the first point of the line on the map.") -> None:
+        self.res = None
+        self.chart.set_result(None, False)
+        self.hero.hide()
+        self.result_box.hide()
+        self.note.hide()
+        self.adjustSize()
+
+    def _redraw(self) -> None:
+        if self.res is not None:
+            self.chart.set_result(self.res, self.true_scale.isChecked())
+
+    def show_result(self, res: dict, finished: bool) -> None:
+        self.res = res
+        self._redraw()
+        u = res.get("distance_units", "m")
+
+        def m(v, suffix=" m"):
+            return "–" if v is None else f"{v:,.1f}{suffix}"
+        self.rows["length"].setText(f"{res['total_distance']:,.3f} {u}")
+        self.rows["min"].setText(m(res.get("min")))
+        self.rows["max"].setText(m(res.get("max")))
+        self.rows["gain"].setText(m(res.get("gain")))
+        self.rows["loss"].setText(m(res.get("loss")))
+        self.rows["start"].setText(m(res.get("start_elevation")))
+        self.rows["end"].setText(m(res.get("end_elevation")))
+        outside = res.get("samples_outside", 0)
+        self.note.setText(f"{outside} of {len(res['elevation'])} sample points are outside the DEM or have no data."
+                          if outside else "")
+        self.note.setVisible(bool(outside))
+        self.hero.show()
+        self.result_box.show()
+        self.adjustSize()
+
+    def closeEvent(self, e) -> None:
+        self.closed.emit()
+        super().closeEvent(e)
+
+    def reject(self) -> None:           # Esc or the close button
+        self.close()
+
+
+
+# Measure-window tips (Distance, Area, Profile) are shown only until the first measurement of each kind is finished.
+_HINTS_SEEN: set = set()
+
+# Surface (3D) area is switched off for now: the Area window shows only the 2D numbers (Area and
+# Perimeter), which are the ones checked against ArcMap. The 3D code is all still here (backend
+# core/measure/surface_area.py, the "include_surface" request field and the two extra rows in
+# AreaWindow.show_result). We may add it back in future: set this to True and restart the backend.
+SHOW_SURFACE_AREA = False
+
+# The "True scale" tick of the Elevation Profile is hidden for now (the chart code still supports it).
+# Set this to True to bring the checkbox back.
+SHOW_TRUE_SCALE = False
+
+class AreaWindow(QDialog):
+    """Floating Area box: the Area and Perimeter of the polygon being clicked, with a units menu."""
+    unitsChanged = pyqtSignal(str)          # backend unit name: square metres, hectares ...
+    closed = pyqtSignal()
+
+    UNITS = [("Square metres", "square metres"), ("Hectares", "hectares"),
+             ("Square kilometres", "square kilometres"), ("Acres", "acres"), ("Square miles", "square miles")]
+    DEFAULT_UNIT = "square kilometres"
+    DECIMALS = {"m\u00b2": 1, "ha": 2, "km\u00b2": 3, "ac": 2, "mi\u00b2": 3}
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setObjectName("measureWindow")
+        self.setWindowTitle("Measure Area")
+        self.setWindowFlag(Qt.WindowType.Tool, True)
+        self.setModal(False)
+        self.setMinimumWidth(310)
+        self.setStyleSheet(MeasureWindow.style())
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 10, 10, 10)
+        card = QFrame()
+        card.setObjectName("measureCard")
+        body = QVBoxLayout(card)
+        body.setContentsMargins(14, 12, 14, 12)
+        body.setSpacing(5)
+
+        body.addWidget(_card_title("Area"))
+        top = QHBoxLayout()
+        units_label = QLabel("Units")
+        units_label.setObjectName("measureName")
+        self.units = QComboBox()
+        for text, key in self.UNITS:
+            self.units.addItem(text, key)
+        self.units.setCurrentIndex(max(0, self.units.findData(self.DEFAULT_UNIT)))
+        self.units.currentIndexChanged.connect(lambda _i: self.unitsChanged.emit(self.units.currentData()))
+        top.addWidget(units_label)
+        top.addWidget(self.units, 1)
+        body.addLayout(top)
+
+        self.method = QLabel("Area measurement")
+        self.method.setObjectName("measureMethod")
+        self.layer = QLabel("")
+        self.layer.setObjectName("measureLayer")
+        self.hint = QLabel("Click the first corner on the map.")
+        self.hint.setObjectName("measureHint")
+        self.hint.setWordWrap(True)
+        body.addWidget(self.hint)
+
+        self.rows: dict[str, QLabel] = {}
+        self.names: dict[str, QLabel] = {}
+        self.result_box = QWidget()
+        rl = QVBoxLayout(self.result_box)
+        rl.setContentsMargins(0, 4, 0, 0)
+        rl.setSpacing(3)
+        for key, name, big in (("area", "Area", True), ("perimeter", "Perimeter", False),
+                                ("surface", "Surface area (3D)", False), ("extra", "Extra from slope", False)):
+            line = QHBoxLayout()
+            a = QLabel(name + ":")
+            a.setObjectName("measureName")
+            b = QLabel("")
+            b.setObjectName("measureBig" if big else "measureValue")
+            b.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            line.addWidget(a)
+            line.addStretch(1)
+            line.addWidget(b)
+            rl.addLayout(line)
+            self.rows[key] = b
+            self.names[key] = a
+        body.addWidget(self.result_box)
+        outer.addWidget(card)
+        self.show_waiting()
+
+    def set_layer(self, name: str, geographic: bool) -> None:
+        self.method.setText("Area")
+        self.layer.setText(name)
+
+    def show_waiting(self, text: str = "Click the first corner on the map.") -> None:
+        self.hint.setText(text)
+        self.hint.setVisible(type(self).__name__ not in _HINTS_SEEN)
+        self.result_box.hide()
+        self.adjustSize()
+
+    def show_result(self, res: dict, finished: bool) -> None:
+        self.hint.setText("Double-click to finish \u00b7 Right-click removes the last point" if not finished
+                          else "Area finished. Click the map to measure a new area.")
+        self.hint.setVisible(type(self).__name__ not in _HINTS_SEEN)
+        if finished:
+            _HINTS_SEEN.add(type(self).__name__)       # the tips are shown once, then stay out of the way
+        d = self.DECIMALS.get(res["unit"], 2)
+        self.rows["area"].setText(f"{res['area']:,.{d}f} {res['unit']}")
+        pd = 3 if res["perimeter_unit"] == "km" else 1
+        self.rows["perimeter"].setText(f"{res['perimeter']:,.{pd}f} {res['perimeter_unit']}")
+        surf = res.get("surface")
+        for key in ("surface", "extra"):                  # 3D area is worked out once the polygon is finished
+            self.rows[key].setVisible(surf is not None)
+            self.names[key].setVisible(surf is not None)
+        if surf is not None:
+            self.rows["surface"].setText(f"{surf['surface_area']:,.{d}f} {res['unit']}")
+            ratio = surf.get("surface_to_flat_ratio")
+            self.rows["extra"].setText("\u2013" if ratio is None else f"+{(ratio - 1) * 100:,.1f} %")
         self.result_box.show()
         self.adjustSize()
 
@@ -745,6 +1437,11 @@ class MainWindow(QMainWindow):
         c.visibilityChanged.connect(self.set_layer_visible)
         c.statisticsRequested.connect(lambda lid: self._show_stats_for(lid))
         c.zoomToLayerRequested.connect(self.map.canvas.zoom_to_layer)
+        c.attributeTableRequested.connect(self._open_attribute_table)
+        c.removeRequested.connect(self._remove_layer)
+        c.layerRenamed.connect(self._rename_layer)
+        c.layersReordered.connect(self._layers_reordered)
+        c.opacityChanged.connect(self._menu_opacity_changed)
       
         c.closeRequested.connect(lambda: self.set_flag("contents", False))
     
@@ -934,7 +1631,8 @@ class MainWindow(QMainWindow):
             self.toggle(tool["toggle"])
         elif kind == "panel":
             self.set_flag("statistics", True)
-            self.inspector.show_tool(tool, self.raster_names())
+            wired = bool(tool.get("handler")) and hasattr(self, "run_" + tool["handler"]) or tool.get("handler") == "terrain_derivative"
+            self.inspector.show_tool(tool, self.raster_names(), wired)
         elif kind == "dialog":
             dlg = ToolDialog(self, tool, self.raster_names())
             if dlg.exec() == QDialog.DialogCode.Accepted:
@@ -945,16 +1643,27 @@ class MainWindow(QMainWindow):
     def on_tool_run(self, tool: dict, values: dict) -> None:
         handler = tool.get("handler")
         fn = getattr(self, "run_" + handler, None) if handler else None
+        in_panel = bool(getattr(self.inspector, "_busy", False))   # run started from the tool panel button
         if fn:
             try:
                 fn(tool, values)
             except Exception as e:
                 traceback.print_exc()
-                self.show_toast(f"{tool['label']}: {e}")
+                if in_panel:
+                    self.inspector.run_finished(False, _friendly_error(e))
+                else:
+                    self.show_toast(f"{tool['label']}: {e}")
                 return
+            if in_panel:
+                self.inspector.run_finished(True, "Result is ready.")
+            self.set_status(tool["label"])
         else:
-            self.show_toast(f"{tool['label']}: backend not connected in this interface preview")
-        self.set_status(f"{tool['label']} (preview)")
+            msg = "This tool is not connected to the backend yet."
+            if in_panel:
+                self.inspector.run_finished(False, msg)
+            else:
+                self.show_toast(f"{tool['label']}: {msg}")
+            self.set_status(f"{tool['label']} (preview)")
 
     # handlers for tools that have a visible effect in the frontend
     # ----- Analysis > Quality & Statistics: ask the backend, show the answer ------
@@ -972,15 +1681,9 @@ class MainWindow(QMainWindow):
     def run_nodata_check(self, tool: dict, values: dict) -> None:
         src = _quality_source(self, values)
         r = self.api_get(f"/analysis/quality-statistics/nodata-check/{src.id}")
-        w, h = src.source_width, src.source_height
-        size = f"Size: {w:,} columns x {h:,} rows\n" if w and h else ""
-        text = (f"Layer: {src.name}\n{size}\n"
-                f"NoData cells: {r['nodata_count']:,} of {r['total']:,} ({r['percent']}%)\n"
-                f"Rows containing NoData: {r['rows_affected']:,}" + (f" of {h:,}" if h else "") + "\n"
-                f"Columns containing NoData: {r['columns_affected']:,}" + (f" of {w:,}" if w else "") + "\n\n"
-                + ("No NoData found." if r["status"] == "clean" else "This raster contains NoData cells."))
-        QMessageBox.information(self, "NoData Check", text)
-        self.set_status(f"NoData Check · {src.name} · {r['percent']}% NoData")
+        self._nodata_dialog = NoDataDialog(self, src.name, r, src.source_width, src.source_height)
+        self._nodata_dialog.show()
+        self.set_status(f"NoData Check \u00b7 {src.name} \u00b7 {r['percent']}% NoData")
 
     def run_outlier_check(self, tool: dict, values: dict) -> None:
         src = _quality_source(self, values)
@@ -988,14 +1691,9 @@ class MainWindow(QMainWindow):
         thr = float(values.get("threshold", 1.5 if method == "iqr" else 3.0))
         r = self.api_get(f"/analysis/quality-statistics/outlier-check/{src.id}",
                          {"method": method, "threshold": thr})
-        lo = f"{r['lowest_outlier']:.2f}" if r["lowest_outlier"] is not None else "-"
-        hi = f"{r['highest_outlier']:.2f}" if r["highest_outlier"] is not None else "-"
-        text = (f"Layer: {src.name}\nMethod: {'IQR' if method == 'iqr' else 'Z-score'} (threshold {r['threshold']})\n\n"
-                f"Normal range: {r['lower_bound']:.2f} to {r['upper_bound']:.2f}\n"
-                f"Outlier cells: {r['outlier_count']:,} ({r['percent']}% of valid cells)\n"
-                f"Lowest outlier: {lo}\nHighest outlier: {hi}")
-        QMessageBox.information(self, "Outlier Check", text)
-        self.set_status(f"Outlier Check · {src.name} · {r['outlier_count']:,} outliers")
+        self._outlier_dialog = OutlierDialog(self, src.name, r, method)
+        self._outlier_dialog.show()
+        self.set_status(f"Outlier Check \u00b7 {src.name} \u00b7 {r['outlier_count']:,} outliers")
 
     def run_ramp(self, tool: dict, values: dict) -> None:
         self.ws.apply_ramp(values["ramp"])
@@ -1018,12 +1716,16 @@ class MainWindow(QMainWindow):
         self.show_toast(f"{len(chosen)} DEM{'s' if len(chosen) != 1 else ''} selected for the mosaic")
 
     # ----- Analysis > Measure > Distance: collect clicks on the map, ask the backend ------
-    def act_measure_distance(self) -> None:
-        """Analysis > Distance: open the Measure box and start measuring on the selected DEM (or the first)."""
+    def _measure_source(self):
+        """The DEM to measure on: the selected raster, or the first loaded one."""
         def measurable(l) -> bool:
             return l.group == "raster" and l.user_added and l.data is None and l.rgba is not None
         chosen = next((l for l in self.ws.layers if l.id == self.selected and measurable(l)), None)
-        source = chosen or next((l for l in self.ws.rasters() if measurable(l)), None)
+        return chosen or next((l for l in self.ws.rasters() if measurable(l)), None)
+
+    def act_measure_distance(self) -> None:
+        """Analysis > Distance: open the Measure box and start measuring on the selected DEM (or the first)."""
+        source = self._measure_source()
         if source is None:
             self.show_toast("Load a raster DEM before measuring.")
             return
@@ -1031,6 +1733,10 @@ class MainWindow(QMainWindow):
             self._measure_window = MeasureWindow(self)
             self._measure_window.unitsChanged.connect(lambda _u: self._measure_update())
             self._measure_window.closed.connect(self._measure_closed)
+        for other in (getattr(self, "_area_window", None), getattr(self, "_profile_window", None)):
+            if other is not None:
+                other.hide()
+        self._measure_kind = "line"
         self._measure_layer = source
         self._measure_points: list = []
         self._measure_done = False
@@ -1041,8 +1747,106 @@ class MainWindow(QMainWindow):
             w.move(self.map.mapToGlobal(QPoint(24, 70)))
         w.show()
         w.raise_()
-        self.map.canvas.set_mode("measure")
+        self.map.canvas.start_measure("line")
         self.map.canvas.setFocus()
+
+    def act_measure_area(self) -> None:
+        """Analysis > Area: open the Area box and click the corners of a polygon on the selected DEM."""
+        source = self._measure_source()
+        if source is None:
+            self.show_toast("Load a raster DEM before measuring.")
+            return
+        if getattr(self, "_area_window", None) is None:
+            self._area_window = AreaWindow(self)
+            self._area_window.unitsChanged.connect(lambda _u: self._measure_update())
+            self._area_window.closed.connect(self._measure_closed)
+        for other in (getattr(self, "_measure_window", None), getattr(self, "_profile_window", None)):
+            if other is not None:
+                other.hide()
+        self._measure_kind = "polygon"
+        self._measure_layer = source
+        self._measure_points = []
+        self._measure_done = False
+        w = self._area_window
+        w.set_layer(source.name, "4326" in (source.crs or ""))
+        w.show_waiting()
+        if not w.isVisible():
+            w.move(self.map.mapToGlobal(QPoint(24, 70)))
+        w.show()
+        w.raise_()
+        self.map.canvas.start_measure("polygon")
+        self.map.canvas.setFocus()
+
+    def _area_update(self) -> None:
+        w = getattr(self, "_area_window", None)
+        lyr = getattr(self, "_measure_layer", None)
+        points = getattr(self, "_measure_points", [])
+        if w is None or lyr is None:
+            return
+        if len(points) < 3:
+            w.show_waiting(("Click the first corner on the map.", "Click the second corner.",
+                            "Click the third corner to see the area.")[len(points)])
+            return
+        display_height, display_width = lyr.rgba.shape[:2]
+        pixels = [[cy * lyr.source_height / display_height, cx * lyr.source_width / display_width]
+                  for cx, cy in points]
+        try:
+            res = self.api_post("/analysis/measure/area", {
+                "layer_id": lyr.id, "pixels": pixels, "units": w.units.currentData(),
+                "include_surface": SHOW_SURFACE_AREA and bool(self._measure_done)})
+        except Exception as e:
+            self.show_toast(f"Area: {e}")
+            return
+        w.show_result(res, self._measure_done)
+        self.set_status(f"Area \u00b7 {lyr.name} \u00b7 {res['area']:,.3f} {res['unit']}")
+
+    def act_measure_profile(self) -> None:
+        """Analysis > Elevation Profile: draw a line on the selected DEM and see the height along it."""
+        source = self._measure_source()
+        if source is None:
+            self.show_toast("Load a raster DEM before drawing a profile.")
+            return
+        if getattr(self, "_profile_window", None) is None:
+            self._profile_window = ProfileWindow(self)
+            self._profile_window.unitsChanged.connect(lambda _u: self._measure_update())
+            self._profile_window.closed.connect(self._measure_closed)
+        for other in (getattr(self, "_measure_window", None), getattr(self, "_area_window", None)):
+            if other is not None:
+                other.hide()
+        self._measure_kind = "profile"
+        self._measure_layer = source
+        self._measure_points = []
+        self._measure_done = False
+        w = self._profile_window
+        w.set_layer(source.name, "4326" in (source.crs or ""))
+        w.show_waiting()
+        if not w.isVisible():
+            w.move(self.map.mapToGlobal(QPoint(24, 70)))
+        w.show()
+        w.raise_()
+        self.map.canvas.start_measure("line")
+        self.map.canvas.setFocus()
+
+    def _profile_update(self) -> None:
+        w = getattr(self, "_profile_window", None)
+        lyr = getattr(self, "_measure_layer", None)
+        points = getattr(self, "_measure_points", [])
+        if w is None or lyr is None:
+            return
+        if len(points) < 2:
+            w.show_waiting("Click the second point." if points else "Click the first point of the line on the map.")
+            return
+        display_height, display_width = lyr.rgba.shape[:2]
+        pixels = [[cy * lyr.source_height / display_height, cx * lyr.source_width / display_width]
+                  for cx, cy in points]
+        try:
+            res = self.api_post("/analysis/measure/elevation-profile", {
+                "layer_id": lyr.id, "pixels": pixels, "units": w.units.currentData(), "samples": 400})
+        except Exception as e:
+            self.show_toast(f"Elevation profile: {e}")
+            return
+        w.show_result(res, self._measure_done)
+        self.set_status(f"Elevation profile \u00b7 {lyr.name} \u00b7 {res['total_distance']:,.3f} {res['distance_units']}")
 
     def _measure_changed(self, points: list, finished: bool) -> None:
         """A point was added or removed (or the line finished): measure again and update the box."""
@@ -1050,6 +1854,13 @@ class MainWindow(QMainWindow):
         self._measure_update()
 
     def _measure_update(self) -> None:
+        kind = getattr(self, "_measure_kind", "line")
+        if kind == "polygon":
+            self._area_update()
+            return
+        if kind == "profile":
+            self._profile_update()
+            return
         w = getattr(self, "_measure_window", None)
         lyr = getattr(self, "_measure_layer", None)
         points = getattr(self, "_measure_points", [])
@@ -1113,8 +1924,10 @@ class MainWindow(QMainWindow):
         elif operation == "slope":
             units = values["output_units"]
             payload["units"] = "percent" if units == "Percent rise" else "degrees"
+            payload["method"] = "geodesic" if values.get("method") == "Geodesic" else "planar"
         elif operation == "aspect":
             payload["flat_as_minus_one"] = values["flat_areas_as_-1"]
+            payload["method"] = "geodesic" if values.get("method") == "Geodesic" else "planar"
         elif operation == "contours":
             payload.update({
                 "interval": values["interval"],
@@ -1238,6 +2051,58 @@ class MainWindow(QMainWindow):
         self.ribbon.refresh_checks()
         self.map.refresh_pixel()
 
+    def _layers_reordered(self) -> None:
+        self.mark_dirty()
+        self.map.canvas.invalidate()
+        QTimer.singleShot(60, self.contents.rebuild)          # after the drag has fully ended
+        self.set_status("Layer order changed")
+
+    def _rename_layer(self, lid: str, name: str) -> None:
+        self.ws.layer(lid).name = name
+        self.mark_dirty()
+        self.contents.rebuild()
+        if self.selected == lid:
+            self.inspector.show_layer(self.ws.layer(lid))
+        self.set_status(f"Renamed to {name}")
+
+    def _remove_layer(self, lid: str) -> None:
+        try:
+            lyr = self.ws.layer(lid)
+        except KeyError:
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Remove layer")
+        box.setText(f"Remove \u201c{lyr.name}\u201d from the project?")
+        box.setInformativeText("It disappears from every map canvas. This cannot be undone.")
+        remove = box.addButton("Remove", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is not remove:
+            return
+        warning = ""
+        if lyr.user_added:                                    # layers of the sample workspace have no backend copy
+            try:
+                httpx.delete(f"{BASE_URL}{API_PREFIX}/file/add-data/layers/{lid}", timeout=10).raise_for_status()
+            except Exception as exc:
+                warning = f" (the backend could not delete it: {_friendly_error(exc)})"
+        self.ws.remove_layer(lid)
+        if self.selected == lid:
+            self.selected = None
+            self.on_layer_selected(None)
+        self.contents.rebuild()
+        self.map.canvas.invalidate()
+        self.ribbon.refresh_checks()
+        self.map.refresh_pixel()
+        self.mark_dirty()
+        self.show_toast(f"Removed {lyr.name}{warning}")
+
+    def _menu_opacity_changed(self, lid: str, value: int) -> None:
+        """Opacity slider in a layer's right-click menu: update the map now and keep the side panel in step."""
+        self._opacity_changed(lid, value)
+        if self.selected == lid:
+            QTimer.singleShot(0, lambda: self.inspector.show_layer(self.ws.layer(lid)))
+
     def _opacity_changed(self, lid: str, value: int) -> None:
         self.ws.layer(lid).opacity = value
         self.mark_dirty()
@@ -1278,9 +2143,10 @@ class MainWindow(QMainWindow):
             self.inspector.show_layer(self.ws.layer("regions"))
 
     def _mode_changed(self, mode: str) -> None:
-        w = getattr(self, "_measure_window", None)
-        if mode != "measure" and w is not None and w.isVisible():
-            w.hide()
+        for name in ("_measure_window", "_area_window", "_profile_window"):
+            w = getattr(self, name, None)
+            if mode != "measure" and w is not None and w.isVisible():
+                w.hide()
 
     # ----- actions (referenced by tool["action"]) ---------------------------
     def act_mode_explore(self) -> None:
@@ -1314,7 +2180,17 @@ class MainWindow(QMainWindow):
         self.map.canvas.setFocus()
 
     def act_swipe(self) -> None:
-        self.show_toast("Swipe is not available yet")
+        """Swipe: drag a vertical line to compare the top raster with the layers below it."""
+        canvas = self.map.canvas
+        if canvas.mode == "swipe":
+            canvas.set_mode("explore")
+            return
+        shown = [l for l in self.ws.rasters() if l.visible and l.rgba is not None]
+        if len(shown) < 2:
+            self.show_toast("Swipe compares the top raster with the one below it. Show two rasters first.")
+            return
+        canvas.set_mode("swipe")
+        canvas.setFocus()
 
     def act_full_extent(self) -> None:
         self.map.canvas.fit()
@@ -1325,8 +2201,44 @@ class MainWindow(QMainWindow):
             return
         self.map.canvas.zoom_to_layer(self.selected)
 
+    def act_attribute_table(self) -> None:
+        """View > Attribute Table: the rows of the selected vector layer (or the first one loaded)."""
+        chosen = next((l for l in self.ws.layers if l.id == self.selected and l.shapes), None)
+        chosen = chosen or next((l for l in self.ws.layers if l.shapes), None)
+        if chosen is None:
+            self.show_toast("Load a vector layer (Add Vector) to see its attribute table.")
+            return
+        self._open_attribute_table(chosen.id)
+
+    def _open_attribute_table(self, lid: str) -> None:
+        """Open the attribute table window for one vector layer (also used by the layer's ... menu)."""
+        chosen = next((l for l in self.ws.layers if l.id == lid and l.shapes), None)
+        if chosen is None:
+            return
+        if getattr(self, "_attribute_window", None) is None:
+            self._attribute_window = AttributeTableWindow(self, self.api_get)
+        w = self._attribute_window
+        try:
+            w.show_layer(chosen.id, chosen.name)
+        except RuntimeError as e:
+            self.show_toast(str(e))
+            return
+        if not w.isVisible():
+            w.move(self.map.mapToGlobal(QPoint(40, 90)))
+        w.show()
+        w.raise_()
+
     def act_show_stats(self) -> None:
         self._show_stats_for(self.selected)
+
+    def act_toggle_stats(self) -> None:
+        """Ribbon button: first click opens the statistics panel, the next click closes it."""
+        showing_stats = (self.flags.get("statistics", False) and not self.inspector.isHidden()
+                         and self.inspector.stack.currentWidget() is not self.inspector.tool_scroll)
+        if showing_stats:
+            self.set_flag("statistics", False)
+        else:
+            self._show_stats_for(self.selected)
 
     def act_fullscreen(self) -> None:
         if self.isFullScreen():
@@ -1483,6 +2395,7 @@ class MainWindow(QMainWindow):
             "view": {"scale": c.scale, "ox": c.ox, "oy": c.oy},
             "layers": {l.id: {"visible": l.visible, "opacity": l.opacity} for l in self.ws.layers},
             "order": [l.id for l in self.ws.layers],
+            "names": {l.id: l.name for l in self.ws.all_layers()},
         }
 
     def _canvases_state(self) -> dict:
@@ -1505,7 +2418,7 @@ class MainWindow(QMainWindow):
         if not path:
             return False
         p = Path(path)
-        if p.suffix.lower() not in (PROJECT_EXT, ".json"):
+        if p.suffix.lower() not in (PROJECT_EXT, ".agtaam", ".json"):
             p = p.with_suffix(PROJECT_EXT)
         return self._save_to(p, p.stem, "/file/project/save-as")
 
@@ -1589,6 +2502,10 @@ class MainWindow(QMainWindow):
             s = saved.get(lyr.id)
             if s:
                 lyr.visible, lyr.opacity = bool(s.get("visible", True)), int(s.get("opacity", 100))
+        names = gui.get("names", {})
+        for lyr in self.ws.all_layers():                       # names the user typed in the Layers panel
+            if names.get(lyr.id):
+                lyr.name = names[lyr.id]
         order = {lid: n for n, lid in enumerate(gui.get("order", []))}
         if order:
             self.ws.layers.sort(key=lambda l: order.get(l.id, len(order)))
@@ -1650,6 +2567,56 @@ class MainWindow(QMainWindow):
                     pass                                       # keep the stand-alone drawing
 
     # --- add data ------------------------------------------------------------
+    def _add_vector_flow(self, path: str) -> None:
+        """Add a vector file or geodatabase. A file with several layers asks which ones to add."""
+        stem = Path(path).stem
+        try:
+            names = self.api_get("/file/add-data/vector-layers", {"path": path}).get("layers", [])
+        except Exception as exc:
+            self.show_toast(f"Add vector failed: {_message(exc)}")
+            return
+        if len(names) > 1:
+            dlg = VectorLayerChooser(self, Path(path).name, names)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            picks = dlg.chosen()
+            if not picks:
+                self.show_toast("No layer ticked")
+                return
+        else:
+            picks = names or [None]
+        added, problems = [], []
+        for pick in picks:
+            payload = {"path": path, "name": pick or stem}
+            if pick:
+                payload["layer"] = pick
+            try:
+                info = self.api_post("/file/add-data/vector", payload)
+                try:
+                    layer = self._show_vector(info)
+                except Exception:
+                    try:
+                        httpx.delete(f"{BASE_URL}{API_PREFIX}/file/add-data/layers/{info['id']}", timeout=10)
+                    except Exception:
+                        pass
+                    raise
+                added.append(layer)
+            except Exception as exc:
+                traceback.print_exc()
+                problems.append(f"{pick or stem}: {_message(exc)}")
+        if added:
+            self.contents.rebuild()
+            self.map.canvas.invalidate()
+            self.on_layer_selected(added[-1].id)
+            if not any(l.group == "raster" for l in self.ws.layers):
+                self.map.canvas.fit()
+            self.mark_dirty()
+        if problems:
+            QMessageBox.warning(self, "Add vector", "Some layers could not be added:\n\n" + "\n".join(problems))
+        if added:
+            self.show_toast(f"Vector added successfully: {added[0].name}" if len(added) == 1
+                            else f"{len(added)} vector layers added")
+
     def _add_data(
         self,
         title: str,
@@ -1667,6 +2634,10 @@ class MainWindow(QMainWindow):
 
     # User cancelled file selection
         if not file_path:
+            return
+
+        if kind == "vector":
+            self._add_vector_flow(file_path)
             return
 
         try:
@@ -1757,10 +2728,76 @@ class MainWindow(QMainWindow):
         self._add_data("Add raster", "Raster (*.tif *.tiff *.img *.asc);;All files (*)", "raster")
 
     def act_add_vector(self) -> None:
-        self._add_data("Add vector", VECTOR_FILTER, "vector")
+        """Add Vector: a menu offers a vector file or a file geodatabase (.gdb is a folder)."""
+        from PyQt6.QtGui import QCursor
+        menu = QMenu(self)
+        menu.addAction(icon("vector_add", "#244557", 18), "Vector file\u2026",
+                       lambda: self._add_data("Add vector", VECTOR_FILTER, "vector"))
+        menu.addAction(icon("database", "#244557", 18), "File geodatabase (.gdb)\u2026", self._add_geodatabase)
+        menu.exec(QCursor.pos())
+
+    def _add_geodatabase(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Choose a file geodatabase (.gdb folder)")
+        if not folder:
+            return
+        if not folder.lower().rstrip("/\\").endswith(".gdb"):
+            self.show_toast("That folder is not a file geodatabase (its name should end in .gdb)")
+            return
+        self._add_vector_flow(folder)
 
     def act_add_basemap(self) -> None:
         self._add_data("Add basemap", "Basemap (*.tif *.tiff *.png *.jpg);;All files (*)", "basemap")
+
+    # ----- File > Export -----------------------------------------------------------
+    def _pick_layer(self, title: str, layers: list, what: str):
+        """The layer to export: the only one, or one chosen from a list."""
+        if not layers:
+            self.show_toast(f"{title}: there is no {what} layer to export")
+            return None
+        if len(layers) == 1:
+            return layers[0]
+        names = [l.name for l in layers]
+        name, ok = QInputDialog.getItem(self, title, f"Which {what} layer?", names, 0, False)
+        return layers[names.index(name)] if ok else None
+
+    def _export_with_backend(self, title: str, route: str, payload: dict) -> None:
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            result = self.api_post(route, payload)
+        except Exception as exc:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, title, f"Could not export:\n{_message(exc)}")
+            return
+        QApplication.restoreOverrideCursor()
+        out = Path(str(result.get("path", "")))
+        self._last_dir = str(out.parent)
+        self.show_toast(f"Saved \u00b7 {out.name}")
+
+    def act_export_raster(self) -> None:
+        layer = self._pick_layer("Export Raster", self.ws.rasters(), "raster")
+        if layer is None:
+            return
+        filters = {"GeoTIFF (*.tif *.tiff)": "geotiff", "ASCII Grid (*.asc)": "ascii", "XYZ points (*.csv)": "xyz"}
+        start = str(Path(self._last_dir) / layer.name)
+        path, chosen = QFileDialog.getSaveFileName(self, "Export raster", start, ";;".join(filters))
+        if not path:
+            return
+        self._export_with_backend("Export Raster", "/file/export/elevations",
+                                  {"layer_id": layer.id, "path": path, "format": filters.get(chosen, "geotiff")})
+
+    def act_export_vector(self) -> None:
+        vectors = [l for l in self.ws.layers if l.group == "vector"]
+        layer = self._pick_layer("Export Vector", vectors, "vector")
+        if layer is None:
+            return
+        filters = {"GeoJSON (*.geojson)": "geojson", "Shapefile (*.shp)": "shapefile",
+                   "GeoPackage (*.gpkg)": "gpkg", "CSV, points only (*.csv)": "csv"}
+        start = str(Path(self._last_dir) / layer.name)
+        path, chosen = QFileDialog.getSaveFileName(self, "Export vector", start, ";;".join(filters))
+        if not path:
+            return
+        self._export_with_backend("Export Vector", "/file/export/vector",
+                                  {"layer_id": layer.id, "path": path, "format": filters.get(chosen, "geojson")})
 
     def act_export_image(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Export map image", "terrain_map.png",

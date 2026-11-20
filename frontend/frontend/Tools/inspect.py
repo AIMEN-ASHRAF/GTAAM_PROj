@@ -7,7 +7,7 @@ GROUP = {
         dict(id="inspect-pixel", label="Pixel Inspector", icon="crosshair", kind="toggle",
              toggle="pixel_inspector", tip="Show or hide the live pixel inspector"),
         dict(id="inspect-properties", label="Properties", icon="table",
-             kind="action", action="show_stats", tip="Show properties of the selected layer"),
+             kind="action", action="toggle_stats", tip="Show properties of the selected layer"),
         dict(id="inspect-metadata", label="Metadata", icon="info", kind="dialog",
              run_label="Close", tip="Dataset metadata",
              fields=[dict(type="info", text=(

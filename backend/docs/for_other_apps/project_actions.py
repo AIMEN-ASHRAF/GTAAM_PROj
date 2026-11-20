@@ -2,7 +2,7 @@
 
 How it works (plain words)
   * The BACKEND is the real project: it holds the layers and writes the project file
-    (<name>.agtaam, a JSON file) plus a "<name>_data" folder that keeps tool results
+    (<name>.gtm, a JSON file) plus a "<name>_data" folder that keeps tool results
     (slope, contours ...) so nothing is lost.
   * This file only drives the window: it asks "save changes?" before anything that
     would throw work away, keeps the title / tab marker, and rebuilds the layer list
@@ -19,8 +19,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QApplication, QDialog, QFileDialog, QMessageBox
 
-EXT = ".agtaam"
-FILTER = "A-GTAAM project (*.agtaam);;Older projects (*.json);;All files (*)"
+EXT = ".gtm"
+FILTER = "A-GTAAM project (*.gtm);;Older projects (*.agtaam *.json);;All files (*)"
 DEFAULT_NAME = "Untitled"
 # colour ramp used when a tool result is drawn (same choices the tool panels use)
 TOOL_RAMP = {"hillshade": "greys", "slope": "slope", "aspect": "viridis", "curvature": "diverging"}

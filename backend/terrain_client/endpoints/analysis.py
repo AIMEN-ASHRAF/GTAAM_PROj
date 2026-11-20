@@ -42,13 +42,15 @@ class AnalysisApi(Endpoints):
         return self._h.post("/analysis/surface-analysis/hillshade", json={
             "layer_id": layer_id, "azimuth": azimuth, "altitude": altitude, "z_factor": z_factor})
 
-    def slope(self, layer_id: str, units: str = "degrees") -> dict:
-        """units: degrees | percent"""
-        return self._h.post("/analysis/surface-analysis/slope", json={"layer_id": layer_id, "units": units})
+    def slope(self, layer_id: str, units: str = "degrees", method: str = "planar") -> dict:
+        """units: degrees | percent.  method: planar (Horn) | geodesic (3D on the ellipsoid, like ArcMap GEODESIC)"""
+        return self._h.post("/analysis/surface-analysis/slope",
+                            json={"layer_id": layer_id, "units": units, "method": method})
 
-    def aspect(self, layer_id: str, flat_as_minus_one: bool = False) -> dict:
+    def aspect(self, layer_id: str, flat_as_minus_one: bool = False, method: str = "planar") -> dict:
+        """method: planar (Horn) | geodesic (on the ellipsoid for degree DEMs, like ArcMap GEODESIC)"""
         return self._h.post("/analysis/surface-analysis/aspect",
-                            json={"layer_id": layer_id, "flat_as_minus_one": flat_as_minus_one})
+                            json={"layer_id": layer_id, "flat_as_minus_one": flat_as_minus_one, "method": method})
 
     def curvature(self, layer_id: str) -> dict:
         return self._h.post("/analysis/surface-analysis/curvature", json={"layer_id": layer_id})

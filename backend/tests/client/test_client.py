@@ -85,6 +85,8 @@ def test_every_backend_endpoint_is_reachable_through_the_client(client, tmp_path
     at = f.layer_attributes(vid, sort="n")
     assert at["total"] == 2 and [r["fid"] for r in at["rows"]] == [1, 0] and at["fields"] == ["name", "n"]
     assert f.identify(vid, 71.1, 34.1, 0.01)["properties"]["name"] == "A"
+    assert isinstance(f.vector_layers(str(pts)), dict)
+    assert Path(f.export_vector(vid, str(tmp_path / "v"), "geojson")["path"]).exists()
     sh = f.layer_shapes(vid, fit_width=100, fit_height=50)
     assert sh["total"] == 2 and sh["framed_on"] == "own" and len(sh["features"][0]["polys"][0][0]) == 5
     assert f.layer_shapes(vid, raster=lid, width=200, height=100)["framed_on"] == "raster"

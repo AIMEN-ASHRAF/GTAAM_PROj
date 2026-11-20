@@ -25,12 +25,13 @@ def distance(req: DistanceRequest):
 
 @measure_router.post("/area")
 def area(req: AreaRequest):
-    return service.area(req.layer_id, req.polygon)
+    """Area and perimeter of a polygon: geodesic on geographic DEMs, planar on projected ones."""
+    return service.area(req.layer_id, req.polygon, req.pixels, req.units, req.include_surface)
 
 
 @measure_router.post("/elevation-profile")
 def elevation_profile(req: ProfileRequest):
-    return service.elevation_profile(req.layer_id, req.line, req.samples)
+    return service.elevation_profile(req.layer_id, req.line, req.samples, req.pixels, req.units)
 
 # ======================================================================
 # Analysis · Quality Statistics  (/analysis/quality-statistics)
@@ -71,12 +72,12 @@ def hillshade(req: HillshadeRequest):
 
 @surface_analysis_router.post("/slope", response_model=DerivedLayerResult)
 def slope(req: SlopeRequest):
-    return service.slope(req.layer_id, req.units)
+    return service.slope(req.layer_id, req.units, req.method)
 
 
 @surface_analysis_router.post("/aspect", response_model=DerivedLayerResult)
 def aspect(req: AspectRequest):
-    return service.aspect(req.layer_id, req.flat_as_minus_one)
+    return service.aspect(req.layer_id, req.flat_as_minus_one, req.method)
 
 
 @surface_analysis_router.post("/curvature", response_model=DerivedLayerResult)

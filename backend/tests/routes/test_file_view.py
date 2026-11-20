@@ -115,7 +115,7 @@ def test_project_keeps_tool_results_gui_state_and_extension(client, hill, tmp_pa
     gui = {"ramp": "Hypsometric", "view": {"scale": 2.5}}
     saved = client.post(f"{API}/file/project/save-as",
                         json={"path": str(tmp_path / "mine"), "name": "mine", "gui": gui}).json()
-    assert saved["path"].endswith("mine.agtaam") and saved["saved_layers"] == 3
+    assert saved["path"].endswith("mine.gtm") and saved["saved_layers"] == 3
     assert (tmp_path / "mine_data").is_dir()
     client.post(f"{API}/file/project/new", json={"name": "Other"})
     opened = client.post(f"{API}/file/project/open", json={"path": saved["path"]}).json()
@@ -133,14 +133,14 @@ def test_project_finds_moved_data_and_reports_missing(client, hill, tmp_path):
     tif = write_geotiff(hill, folder / "dem.tif")
     client.post(f"{API}/file/project/new", json={"name": "P"})
     client.post(f"{API}/file/add-data/raster", json={"path": tif})
-    saved = client.post(f"{API}/file/project/save-as", json={"path": str(folder / "p.agtaam")}).json()
+    saved = client.post(f"{API}/file/project/save-as", json={"path": str(folder / "p.gtm")}).json()
     moved = tmp_path / "b"
     shutil.copytree(folder, moved)                          # whole project folder moved
     shutil.rmtree(folder)
-    ok = client.post(f"{API}/file/project/open", json={"path": str(moved / "p.agtaam")}).json()
+    ok = client.post(f"{API}/file/project/open", json={"path": str(moved / "p.gtm")}).json()
     assert ok["missing_layers"] == [] and ok["layer_count"] == 1
     (moved / "dem.tif").unlink()
-    gone = client.post(f"{API}/file/project/open", json={"path": str(moved / "p.agtaam")}).json()
+    gone = client.post(f"{API}/file/project/open", json={"path": str(moved / "p.gtm")}).json()
     assert gone["missing_layers"] == ["dem"] and gone["layer_count"] == 0
 
 
@@ -154,14 +154,14 @@ def test_project_reopens_a_shapefile_layer(client, tmp_path):
         dst.write({"geometry": {"type": "Point", "coordinates": (73.0, 33.5)}, "properties": {"id": 1}})
     client.post(f"{API}/file/project/new", json={"name": "P"})
     client.post(f"{API}/file/add-data/vector", json={"path": str(shp)})
-    saved = client.post(f"{API}/file/project/save-as", json={"path": str(tmp_path / "p.agtaam")}).json()
+    saved = client.post(f"{API}/file/project/save-as", json={"path": str(tmp_path / "p.gtm")}).json()
     client.post(f"{API}/file/project/new", json={"name": "Other"})
     opened = client.post(f"{API}/file/project/open", json={"path": saved["path"]}).json()
     assert opened["layer_count"] == 1 and opened["missing_layers"] == []
 
 
 def test_open_rejects_a_non_project_file(client, tmp_path):
-    bad = tmp_path / "x.agtaam"
+    bad = tmp_path / "x.gtm"
     bad.write_text("not json at all", encoding="utf-8")
     r = client.post(f"{API}/file/project/open", json={"path": str(bad)})
     assert r.status_code == 400 and "not an A-GTAAM project" in r.text
@@ -249,7 +249,7 @@ def test_vector_shapes_come_back_in_drawing_cells(client, layer_id, tmp_path):
 def test_open_project_returns_every_layer_with_display_data(client, hill, tmp_path):
     path = write_geotiff(hill, tmp_path / "dem.tif")
     client.post(f"{API}/file/add-data/raster", json={"path": path})
-    saved = client.post(f"{API}/file/project/save-as", json={"path": str(tmp_path / "p.agtaam")}).json()
+    saved = client.post(f"{API}/file/project/save-as", json={"path": str(tmp_path / "p.gtm")}).json()
     res = client.post(f"{API}/file/project/open", json={"path": saved["path"]}).json()
     assert len(res["layers"]) == 1 and res["layers"][0]["kind"] == "raster"
     d = res["layers"][0]["display"]
@@ -274,7 +274,7 @@ def test_project_saves_and_opens_two_canvases(client, hill, tmp_path):
                                   {"id": isb, "visible": True, "opacity": 0.8}]),   # isb is shared
     ]
     saved = client.post(f"{API}/file/project/save-as",
-                        json={"path": str(tmp_path / "two.agtaam"), "canvases": canvases,
+                        json={"path": str(tmp_path / "two.gtm"), "canvases": canvases,
                               "active_canvas": "c2"}).json()
     client.post(f"{API}/file/project/new", json={"name": "Other"})
     opened = client.post(f"{API}/file/project/open", json={"path": saved["path"]}).json()
@@ -291,7 +291,7 @@ def test_removing_a_layer_takes_it_out_of_every_canvas(client, hill, tmp_path):
     client.post(f"{API}/file/project/new", json={"name": "P"})
     lid = client.post(f"{API}/file/add-data/raster", json={"path": tif}).json()["id"]
     both = [_canvas("c1", "One", [{"id": lid}]), _canvas("c2", "Two", [{"id": lid}])]
-    path = str(tmp_path / "p.agtaam")
+    path = str(tmp_path / "p.gtm")
     client.post(f"{API}/file/project/save-as", json={"path": path, "canvases": both})
     assert client.delete(f"{API}/file/add-data/layers/{lid}").status_code in (200, 204)
     client.post(f"{API}/file/project/save")                  # keeps the canvases it already has
@@ -317,7 +317,7 @@ def test_old_project_opens_as_one_map_canvas(client, hill, tmp_path):
 
 
 def test_canvas_input_is_checked(client, tmp_path):
-    path = str(tmp_path / "x.agtaam")
+    path = str(tmp_path / "x.gtm")
     dup = [_canvas("c1", "A", []), _canvas("c1", "B", [])]
     assert client.post(f"{API}/file/project/save-as", json={"path": path, "canvases": dup}).status_code == 422
     bad_active = {"path": path, "canvases": [_canvas("c1", "A", [])], "active_canvas": "zzz"}
@@ -326,3 +326,36 @@ def test_canvas_input_is_checked(client, tmp_path):
     assert client.post(f"{API}/file/project/save-as", json={"path": path, "canvases": twice}).status_code == 422
     bad_opacity = [_canvas("c1", "A", [{"id": "x", "opacity": 2}])]
     assert client.post(f"{API}/file/project/save-as", json={"path": path, "canvases": bad_opacity}).status_code == 422
+
+
+def test_export_raster_ascii_and_xyz(client, layer_id, tmp_path):
+    asc = client.post(f"{API}/file/export/elevations",
+                      json={"layer_id": layer_id, "path": str(tmp_path / "d"), "format": "ascii", "nodata": -9999})
+    assert asc.status_code == 200 and asc.json()["path"].endswith(".asc")
+    head = (tmp_path / "d.asc").read_text().splitlines()[:6]
+    assert head[0].startswith("ncols") and head[1].startswith("nrows") and head[5] == "NODATA_value -9999"
+    xyz = client.post(f"{API}/file/export/elevations",
+                      json={"layer_id": layer_id, "path": str(tmp_path / "d"), "format": "xyz"})
+    lines = (tmp_path / "d.csv").read_text().splitlines()
+    assert xyz.status_code == 200 and lines[0] == "x,y,z" and len(lines) > 100
+    back = client.post(f"{API}/file/export/elevations",
+                       json={"layer_id": layer_id, "path": str(tmp_path / "n.tif"), "nodata": -1234})
+    import rasterio
+    with rasterio.open(back.json()["path"]) as src:
+        assert src.nodata == -1234
+
+
+def test_export_vector_roundtrip(client, tmp_path):
+    import json as _json
+    src = tmp_path / "lines.geojson"
+    src.write_text(_json.dumps({"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"name": "a", "n": 3},
+         "geometry": {"type": "LineString", "coordinates": [[60.1, 65.2], [60.9, 65.4]]}}]}))
+    lid = client.post(f"{API}/file/add-data/vector", json={"path": str(src)}).json()["id"]
+    for fmt, ext in (("geojson", ".geojson"), ("shapefile", ".shp"), ("gpkg", ".gpkg")):
+        out = client.post(f"{API}/file/export/vector", json={"layer_id": lid, "path": str(tmp_path / "o"), "format": fmt})
+        assert out.status_code == 200 and out.json()["path"].endswith(ext) and out.json()["features"] == 1
+        again = client.post(f"{API}/file/add-data/vector", json={"path": out.json()["path"]})
+        assert again.status_code == 201
+    assert client.post(f"{API}/file/export/vector",
+                       json={"layer_id": lid, "path": str(tmp_path / "o"), "format": "csv"}).status_code == 400   # lines, not points

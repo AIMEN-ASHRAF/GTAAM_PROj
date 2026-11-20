@@ -15,6 +15,11 @@ Read with fiona (pip install fiona), which brings GDAL's readers:
     .gml                GML
     .fgb                FlatGeobuf
     .tab .mif           MapInfo
+    .gdb                File geodatabase (a folder; read-only)
+    .dxf                AutoCAD DXF (drawn in the file's own coordinates: needs degrees to be placed)
+
+A file that holds several layers (GeoPackage, geodatabase, DXF) can be asked for its layer names with
+list_layers(), and one of them is read with read_vector(path, layer=name).
 """
 from __future__ import annotations
 
@@ -25,7 +30,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 BUILTIN = {".geojson", ".json", ".kml", ".kmz", ".csv"}
-NEEDS_FIONA = {".shp", ".zip", ".gpkg", ".gpx", ".gml", ".fgb", ".tab", ".mif"}
+NEEDS_FIONA = {".shp", ".zip", ".gpkg", ".gpx", ".gml", ".fgb", ".tab", ".mif", ".gdb", ".dxf"}
 SUPPORTED = sorted(BUILTIN | NEEDS_FIONA)
 
 LON_NAMES = ("lon", "lng", "long", "longitude", "x", "easting")
@@ -33,8 +38,29 @@ LAT_NAMES = ("lat", "latitude", "y", "northing")
 GEOJSON_TYPES = ("FeatureCollection", "Feature", "GeometryCollection")
 
 
-def read_vector(path: str | Path) -> dict:
-    """Read any supported vector file -> GeoJSON FeatureCollection in EPSG:4326."""
+def _fiona_source(p: Path) -> str:
+    return f"/vsizip/{p.as_posix()}" if p.suffix.lower() == ".zip" else str(p)
+
+
+def list_layers(path: str | Path) -> list[str]:
+    """Names of the layers inside a file that can hold several (GeoPackage, geodatabase, DXF ...).
+    Files that hold exactly one thing (GeoJSON, KML, CSV ...) give an empty list."""
+    p = Path(path)
+    if p.suffix.lower() not in NEEDS_FIONA:
+        return []
+    try:
+        import fiona
+    except ImportError as exc:  # pragma: no cover
+        raise ImportError(f"Reading '{p.suffix}' files needs fiona: pip install fiona") from exc
+    try:
+        return list(fiona.listlayers(_fiona_source(p)))
+    except Exception as exc:
+        raise ValueError(f"Could not open that file as a vector dataset: {exc}") from exc
+
+
+def read_vector(path: str | Path, layer: str | None = None) -> dict:
+    """Read any supported vector file -> GeoJSON FeatureCollection in EPSG:4326.
+    `layer` picks one layer of a multi-layer file (GeoPackage, geodatabase ...)."""
     p = Path(path)
     ext = p.suffix.lower()
     if ext in (".geojson", ".json"):
@@ -46,7 +72,7 @@ def read_vector(path: str | Path) -> dict:
     elif ext == ".csv":
         data = _read_csv(p)
     elif ext in NEEDS_FIONA:
-        data = _read_with_fiona(p)
+        data = _read_with_fiona(p, layer)
     else:
         raise ValueError(f"Unsupported vector format '{ext}'. Supported: {', '.join(SUPPORTED)}")
     if not data["features"] and ext not in (".geojson", ".json"):
@@ -181,7 +207,7 @@ def _read_csv(p: Path) -> dict:
 
 
 # ---- everything GDAL can read (needs fiona) -----------------------------------
-def _read_with_fiona(p: Path) -> dict:
+def _read_with_fiona(p: Path, layer: str | None = None) -> dict:
     try:
         import fiona
         from fiona.model import to_dict
@@ -189,9 +215,9 @@ def _read_with_fiona(p: Path) -> dict:
         raise ImportError(f"Reading '{p.suffix}' files needs fiona: pip install fiona") from exc
     from rasterio.warp import transform_geom
 
-    source = f"/vsizip/{p.as_posix()}" if p.suffix.lower() == ".zip" else str(p)
+    source = _fiona_source(p)
     try:
-        src = fiona.open(source)
+        src = fiona.open(source, layer=layer) if layer else fiona.open(source)
     except Exception as exc:
         raise ValueError(f"Could not open that file as a vector dataset: {exc}") from exc
     with src:

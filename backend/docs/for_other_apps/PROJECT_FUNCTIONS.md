@@ -16,9 +16,9 @@ your app (the dining room) only places orders.
 | Action | Request | Notes |
 |---|---|---|
 | New | `POST /file/project/new` `{"name": "Untitled project"}` | clears all layers |
-| Save | `POST /file/project/save` `{"path": "C:/x/mine.agtaam", "name": "mine", "gui": {...}}` | omit `path` to overwrite the current file |
+| Save | `POST /file/project/save` `{"path": "C:/x/mine.gtm", "name": "mine", "gui": {...}}` | omit `path` to overwrite the current file |
 | Save As | `POST /file/project/save-as` `{"path": "...", "name": "...", "gui": {...}}` | |
-| Open | `POST /file/project/open` `{"path": "C:/x/mine.agtaam"}` | reply has `missing_layers` and your `gui` back |
+| Open | `POST /file/project/open` `{"path": "C:/x/mine.gtm"}` | reply has `missing_layers` and your `gui` back |
 | Is it unsaved? | `GET /file/project` | `dirty: true/false` |
 | List layers (after Open) | `GET /file/add-data/layers` | rebuild your layer list from this |
 
@@ -26,15 +26,15 @@ your app (the dining room) only places orders.
   which layers are visible...). The backend stores it in the file and gives it back on Open.
 * Saving also writes tool results (slope, hillshade, contours...) into a `<name>_data`
   folder next to the project file. Keep the file and that folder together.
-* The project file is plain JSON (`.agtaam`); older `.json` projects still open.
+* The project file is plain JSON (`.gtm`); older `.agtaam` and `.json` projects still open.
 
 ## Python app, no HTTP code: use `terrain_client`
 ```python
 from terrain_client import TerrainApi          # folder: terrain_client/
 api = TerrainApi("http://127.0.0.1:8765")      # same address the backend runs on
 api.file.new_project("Untitled project")
-api.file.save_project_as(r"C:\work\mine.agtaam", gui={"zoom": 3}, name="mine")
-info = api.file.open_project(r"C:\work\mine.agtaam")   # info["missing_layers"], info["gui"]
+api.file.save_project_as(r"C:\work\mine.gtm", gui={"zoom": 3}, name="mine")
+info = api.file.open_project(r"C:\work\mine.gtm")   # info["missing_layers"], info["gui"]
 layers = api.file.layers()
 ```
 
@@ -60,6 +60,6 @@ and easy to rewrite.
 ```
 curl -X POST http://127.0.0.1:8765/api/v1/file/project/new -H "Content-Type: application/json" -d "{\"name\":\"t\"}"
 curl -X POST http://127.0.0.1:8765/api/v1/file/add-data/raster -H "Content-Type: application/json" -d "{\"path\":\"C:/data/dem.tif\"}"
-curl -X POST http://127.0.0.1:8765/api/v1/file/project/save-as -H "Content-Type: application/json" -d "{\"path\":\"C:/data/t.agtaam\"}"
+curl -X POST http://127.0.0.1:8765/api/v1/file/project/save-as -H "Content-Type: application/json" -d "{\"path\":\"C:/data/t.gtm\"}"
 ```
 Interactive docs for every endpoint: `http://127.0.0.1:8765/docs`.

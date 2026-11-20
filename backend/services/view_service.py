@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 import uuid
 
-from core.raster.crs import cell_size_meters
+from core.raster.crs import cell_size_by_row
 from core.raster.model import Raster
 from core.render.colour_ramp import RAMPS
 from core.render.map_image import render_png
@@ -136,14 +136,14 @@ def _png(raster: Raster, ramp: str, vmin=None, vmax=None) -> bytes:
 
 def hillshade_image(layer_id: str, azimuth: float, altitude: float, z_factor: float) -> bytes:
     r = get_raster_layer(layer_id).raster
-    dx, dy = cell_size_meters(r)
+    dx, dy = cell_size_by_row(r)
     shade = compute_hillshade(r.data, dx, dy, azimuth, altitude, z_factor)
     return _png(r.with_data(shade), "greys", 0, 255)
 
 
 def slope_image(layer_id: str, ramp: str) -> bytes:
     r = get_raster_layer(layer_id).raster
-    dx, dy = cell_size_meters(r)
+    dx, dy = cell_size_by_row(r)
     return _png(r.with_data(compute_slope(r.data, dx, dy)), ramp, 0, 60)
 
 

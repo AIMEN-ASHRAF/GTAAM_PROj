@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -95,8 +97,13 @@ class AddRasterRequest(BaseModel):
 
 
 class AddVectorRequest(BaseModel):
-    path: str = Field(min_length=1)   # a GeoJSON file
+    path: str = Field(min_length=1)   # a vector file, or a .gdb folder
     name: str | None = None
+    layer: str | None = None          # which layer of a multi-layer file (GeoPackage, geodatabase ...)
+
+
+class VectorLayerNames(BaseModel):
+    layers: list[str]                 # empty for files that hold one thing
 
 
 class AddBasemapRequest(BaseModel):
@@ -118,6 +125,14 @@ class LayerOrder(BaseModel):
 class ExportElevationsRequest(BaseModel):
     layer_id: str
     path: str = Field(min_length=1)
+    format: Literal["geotiff", "ascii", "xyz"] = "geotiff"
+    nodata: float | None = None          # value written for empty cells (GeoTIFF / ASCII)
+
+
+class ExportVectorRequest(BaseModel):
+    layer_id: str
+    path: str = Field(min_length=1)
+    format: Literal["geojson", "shapefile", "gpkg", "csv"] = "geojson"
 
 
 class FullscreenRequest(BaseModel):

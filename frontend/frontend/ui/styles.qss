@@ -198,15 +198,27 @@ QSlider::handle:horizontal {
     background: #343a40; border: 2px solid #ffffff;
 }
 QPushButton#primaryButton {
-    background: #343a40; color: #f8f9fa; border: 0; border-radius: 8px;
-    padding: 8px 20px; font-weight: 700;
+    background: #1f6f9a; color: #ffffff; border: 1px solid #1a6189; border-radius: 9px;
+    padding: 9px 20px; font-weight: 700; min-height: 20px;
 }
-QPushButton#primaryButton:hover { background: #212529; }
+QPushButton#primaryButton:hover { background: #185a7f; border-color: #154d6c; }
+QPushButton#primaryButton:pressed { background: #134a68; padding-top: 10px; padding-bottom: 8px; }
+QPushButton#primaryButton:focus { border: 2px solid #8cc4e0; }
+QPushButton#primaryButton:disabled { background: #eef1f4; color: #98a1a9; border: 1px solid #dde2e7; }
+QPushButton#primaryButton[state="busy"] { background: #e6f1f7; color: #1f6f9a; border: 1px solid #b9d8e8; }
+QPushButton#primaryButton[state="done"] { background: #e3f4ea; color: #1d7a45; border: 1px solid #b7e0c7; }
+QPushButton#primaryButton[state="fail"] { background: #fbe4e2; color: #b3261e; border: 1px solid #f0bcb7; }
+QLabel#runStatus { color: #6b737b; font-size: 12px; }
+QLabel#runPillInfo { background: #e6f1f7; color: #1f6f9a; border-radius: 9px; padding: 2px 9px; font-size: 11px; font-weight: 700; }
+QLabel#runPillOk { background: #e3f4ea; color: #1d7a45; border-radius: 9px; padding: 2px 9px; font-size: 11px; font-weight: 700; }
+QLabel#runPillWarn { background: #fdf0d9; color: #9a6410; border-radius: 9px; padding: 2px 9px; font-size: 11px; font-weight: 700; }
+QLabel#runPillErr { background: #fbe4e2; color: #b3261e; border-radius: 9px; padding: 2px 9px; font-size: 11px; font-weight: 700; }
 QPushButton#secondaryButton {
-    background: #ffffff; color: #212529; border: 1px solid #ced4da; border-radius: 8px;
-    padding: 8px 18px; font-weight: 600;
+    background: #ffffff; color: #343a40; border: 1px solid #ced4da; border-radius: 9px;
+    padding: 9px 18px; font-weight: 600; min-height: 20px;
 }
-QPushButton#secondaryButton:hover { background: #e9ecef; border-color: #adb5bd; }
+QPushButton#secondaryButton:hover { background: #f1f4f7; border-color: #98a1a9; }
+QPushButton#secondaryButton:pressed { background: #e4e8ec; }
 
 QMenu { background: #ffffff; border: 1px solid #ced4da; padding: 5px; }
 QMenu::item { padding: 7px 24px 7px 12px; border-radius: 6px; color: #212529; }

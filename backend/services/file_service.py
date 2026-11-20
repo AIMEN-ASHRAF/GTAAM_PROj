@@ -9,11 +9,12 @@ from pathlib import Path
 
 from core.raster._deps import require_rasterio
 from core.raster.reader import read_raster
-from core.raster.writer import write_geotiff
-from core.vector.reader import SUPPORTED as SUPPORTED_VECTOR, read_vector
+from core.raster.writer import write_ascii_grid, write_geotiff, write_xyz_csv
+from core.vector.reader import SUPPORTED as SUPPORTED_VECTOR, list_layers as list_vector_file_layers, read_vector
 from core.render.map_image import render_png
 from core.stats import histogram, layer_stats
 from core.vector.frame import to_cells
+from core.vector.writer import write_vector
 from core.vector.hit import top_feature_at
 from config import get_settings
 from shared.errors import BadRequest
@@ -52,22 +53,45 @@ def add_raster(path: str, name: str | None) -> dict:
     return add_raster_layer(raster, name or Path(path).stem, source=str(Path(path))).info()
 
 
-def add_vector(path: str, name: str | None) -> dict:
+def _is_vector_source(p: Path) -> bool:
+    """A file, or a .gdb folder (a file geodatabase is a folder)."""
+    return p.is_file() or (p.is_dir() and p.suffix.lower() == ".gdb")
+
+
+def vector_layers(path: str) -> list[str]:
+    """Layer names inside a multi-layer vector file (GeoPackage, geodatabase ...); [] for single-layer files."""
     p = Path(path)
-    if not p.is_file():
+    if not _is_vector_source(p):
         raise FileNotFoundError(f"Vector file not found: {path}")
     if p.suffix.lower() not in SUPPORTED_VECTOR:
         raise BadRequest(f"Unsupported vector format '{p.suffix}'. "
                          f"Supported: {', '.join(SUPPORTED_VECTOR)}.", code="unsupported_format")
     try:
-        data = read_vector(p)
+        return list_vector_file_layers(p)
     except ImportError as exc:
         raise BadRequest(str(exc), code="missing_dependency") from exc
     except ValueError as exc:
         raise BadRequest(str(exc), code="bad_vector") from exc
-    layer = add_vector_layer(data, name or p.stem, source=str(p))
-    layer.meta.update(_vector_facts(data))
-    return layer.info()
+
+
+def add_vector(path: str, name: str | None, layer: str | None = None) -> dict:
+    p = Path(path)
+    if not _is_vector_source(p):
+        raise FileNotFoundError(f"Vector file not found: {path}")
+    if p.suffix.lower() not in SUPPORTED_VECTOR:
+        raise BadRequest(f"Unsupported vector format '{p.suffix}'. "
+                         f"Supported: {', '.join(SUPPORTED_VECTOR)}.", code="unsupported_format")
+    try:
+        data = read_vector(p, layer)
+    except ImportError as exc:
+        raise BadRequest(str(exc), code="missing_dependency") from exc
+    except ValueError as exc:
+        raise BadRequest(str(exc), code="bad_vector") from exc
+    layer_obj = add_vector_layer(data, name or layer or p.stem, source=str(p))
+    layer_obj.meta.update(_vector_facts(data))
+    if layer:
+        layer_obj.meta["source_layer"] = layer
+    return layer_obj.info()
 
 
 def _walk(coords):
@@ -100,7 +124,8 @@ def _vector_facts(data: dict) -> dict:
                 ys.append(float(pos[1]))
                 count += 1
     facts = {"features": len(data.get("features", [])), "vertices": count,
-             "geometry": "/".join(sorted(kinds)) or "Unknown", "crs": "EPSG:4326"}
+             "geometry": "/".join(sorted(kinds)) or "Unknown", "crs": "EPSG:4326",
+             "fields": _field_names(data.get("features", []))}
     if xs:
         facts["bounds"] = [min(xs), min(ys), max(xs), max(ys)]
     return facts
@@ -264,9 +289,28 @@ def map_image(layer_id: str, ramp: str, vmin: float | None, vmax: float | None,
     return render_png(raster, ramp, vmin, vmax, limit)
 
 
-def export_elevations(layer_id: str, path: str) -> dict:
+def export_elevations(layer_id: str, path: str, fmt: str = "geotiff", nodata: float | None = None) -> dict:
     raster = get_raster_layer(layer_id).raster
-    return {"path": write_geotiff(raster, path)}
+    if fmt == "ascii":
+        return {"path": write_ascii_grid(raster, path, nodata), "format": fmt}
+    if fmt == "xyz":
+        return {"path": write_xyz_csv(raster, path), "format": fmt}
+    return {"path": write_geotiff(raster, path, nodata), "format": "geotiff"}
+
+
+def export_vector(layer_id: str, path: str, fmt: str = "geojson") -> dict:
+    layer = _vector(layer_id)
+    crs = "EPSG:4326"                    # files you added are stored in lon/lat
+    if layer.tool is not None and layer.derived_from:       # a tool result (contours ...) keeps its raster's system
+        try:
+            crs = layer_store.get(layer.derived_from).raster.crs or crs
+        except Exception:
+            pass
+    try:
+        out = write_vector(layer.geojson, path, fmt, crs)
+    except (ValueError, ImportError) as exc:
+        raise BadRequest(str(exc), code="export_failed") from exc
+    return {"path": out, "format": fmt, "crs": crs, "features": len(layer.geojson.get("features", []))}
 
 
 def statistics(layer_id: str, fmt: str):

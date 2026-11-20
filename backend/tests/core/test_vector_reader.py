@@ -118,3 +118,21 @@ def test_unknown_extension_is_rejected(tmp_path):
     p.write_text("x")
     with pytest.raises(ValueError, match="Unsupported"):
         read_vector(p)
+
+
+def test_multi_layer_geopackage_lists_and_reads_each_layer(tmp_path):
+    fiona = pytest.importorskip("fiona")
+    from fiona.crs import CRS
+    from core.vector.reader import list_layers
+
+    path = str(tmp_path / "multi.gpkg")
+    with fiona.open(path, "w", driver="GPKG", layer="points",
+                    schema={"geometry": "Point", "properties": {"n": "int"}}, crs=CRS.from_epsg(4326)) as f:
+        f.write({"geometry": {"type": "Point", "coordinates": (73.0, 33.0)}, "properties": {"n": 1}})
+    with fiona.open(path, "w", driver="GPKG", layer="roads",
+                    schema={"geometry": "LineString", "properties": {"id": "int"}}, crs=CRS.from_epsg(4326)) as f:
+        f.write({"geometry": {"type": "LineString", "coordinates": [(73.0, 33.0), (73.5, 33.4)]}, "properties": {"id": 7}})
+
+    assert sorted(list_layers(path)) == ["points", "roads"]
+    assert read_vector(path, "roads")["features"][0]["geometry"]["type"] == "LineString"
+    assert read_vector(path, "points")["features"][0]["geometry"]["type"] == "Point"

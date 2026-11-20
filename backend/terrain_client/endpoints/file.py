@@ -32,8 +32,12 @@ class FileApi(Endpoints):
         """Load a DEM. Returns the layer info (use its "id" for every other call)."""
         return self._h.post("/file/add-data/raster", json=clean({"path": path, "name": name}))
 
-    def add_vector(self, path: str, name: str | None = None) -> dict:
-        return self._h.post("/file/add-data/vector", json=clean({"path": path, "name": name}))
+    def add_vector(self, path: str, name: str | None = None, layer: str | None = None) -> dict:
+        return self._h.post("/file/add-data/vector", json=clean({"path": path, "name": name, "layer": layer}))
+
+    def vector_layers(self, path: str) -> dict:
+        """Layer names inside a GeoPackage / geodatabase / DXF ({"layers": []} for single-layer files)."""
+        return self._h.get("/file/add-data/vector-layers", params={"path": path})
 
     def add_basemap(self, name: str, url_template: str, attribution: str | None = None) -> dict:
         return self._h.post("/file/add-data/basemap",
@@ -98,8 +102,15 @@ class FileApi(Endpoints):
         return self._h.get(f"/file/export/map-image/{layer_id}", expect="bytes",
                            params={"ramp": ramp, "vmin": vmin, "vmax": vmax, "max_pixels": max_pixels})
 
-    def export_elevations(self, layer_id: str, path: str) -> dict:
-        return self._h.post("/file/export/elevations", json={"layer_id": layer_id, "path": path})
+    def export_elevations(self, layer_id: str, path: str, fmt: str = "geotiff",
+                          nodata: float | None = None) -> dict:
+        """fmt: "geotiff" | "ascii" | "xyz"."""
+        return self._h.post("/file/export/elevations",
+                            json={"layer_id": layer_id, "path": path, "format": fmt, "nodata": nodata})
+
+    def export_vector(self, layer_id: str, path: str, fmt: str = "geojson") -> dict:
+        """fmt: "geojson" | "shapefile" | "gpkg" | "csv" (points only)."""
+        return self._h.post("/file/export/vector", json={"layer_id": layer_id, "path": path, "format": fmt})
 
     def statistics(self, layer_id: str, fmt: str = "json"):
         """fmt="json" -> dict, fmt="csv" -> str."""

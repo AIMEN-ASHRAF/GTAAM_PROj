@@ -11,6 +11,7 @@ class LayerRequest(BaseModel):
 
 class AspectRequest(LayerRequest):
     flat_as_minus_one: bool = False
+    method: Literal["planar", "geodesic"] = "planar"
 
 
 class DistanceRequest(LayerRequest):
@@ -28,12 +29,29 @@ class DistanceRequest(LayerRequest):
 
 
 class AreaRequest(LayerRequest):
-    polygon: list[XY] = Field(min_length=3)
+    polygon: list[XY] | None = Field(None, min_length=3)   # map coordinates (the layer's CRS)
+    pixels: list[XY] | None = Field(None, min_length=3)    # clicked cells as (row, col)
+    units: Literal["square metres", "hectares", "square kilometres", "acres", "square miles", "auto"] = "square metres"
+    include_surface: bool = False       # also the 3D surface area (uses the DEM heights)
+
+    @model_validator(mode="after")
+    def _one_kind_of_point(self):
+        if (self.polygon is None) == (self.pixels is None):
+            raise ValueError("Send either 'polygon' or 'pixels', not both and not neither.")
+        return self
 
 
 class ProfileRequest(LayerRequest):
-    line: list[XY] = Field(min_length=2)
+    line: list[XY] | None = Field(None, min_length=2)      # map coordinates (the layer's CRS)
+    pixels: list[XY] | None = Field(None, min_length=2)    # clicked cells as (row, col)
     samples: int = Field(200, ge=2, le=5000)
+    units: Literal["metres", "kilometres", "feet", "miles", "auto"] = "metres"   # distance axis only
+
+    @model_validator(mode="after")
+    def _one_kind_of_point(self):
+        if (self.line is None) == (self.pixels is None):
+            raise ValueError("Send either 'line' or 'pixels', not both and not neither.")
+        return self
 
 
 class HillshadeRequest(LayerRequest):
@@ -44,6 +62,7 @@ class HillshadeRequest(LayerRequest):
 
 class SlopeRequest(LayerRequest):
     units: Literal["degrees", "percent"] = "degrees"
+    method: Literal["planar", "geodesic"] = "planar"     # like ArcMap's Method: Horn, or least-squares plane
 
 
 class ContoursRequest(LayerRequest):
