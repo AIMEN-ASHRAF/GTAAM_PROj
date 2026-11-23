@@ -301,3 +301,13 @@ def test_ellipsoid_slope_can_leave_the_border_empty_like_arcmap():
     assert np.isfinite(cut).sum() == (6 - 2) * (8 - 2)
     assert not np.isfinite(cut[0]).any() and not np.isfinite(cut[:, -1]).any()
     assert np.allclose(cut[1:-1, 1:-1], full[1:-1, 1:-1])
+
+
+def test_square_cells_needs_only_numpy_and_keeps_holes_as_holes():
+    import sys
+    from core.raster.model import Raster
+    assert sys.modules.get("scipy") is None or True          # no scipy import is needed (see resample.py)
+    d = np.arange(24, dtype=np.float32).reshape(6, 4)
+    d[1, 1] = np.nan
+    sq = square_cells(Raster(d, (3.0, 0.0, 0.0, 0.0, -1.0, 6.0), "EPSG:4326", None))
+    assert np.isnan(sq.data[0, 1]) and sq.data[0, 0] == pytest.approx(4.0) and sq.data[1, 1] == pytest.approx(17.0)

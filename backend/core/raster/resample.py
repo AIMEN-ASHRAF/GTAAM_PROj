@@ -29,19 +29,33 @@ def resample(raster: Raster, cell_size: float, method: str = "bilinear") -> Rast
     return Raster(data, transform, raster.crs, raster.nodata)
 
 
-def _overlap_weights(n_in: int, size_in: float, n_out: int, size_out: float) -> "sparse.csr_matrix":
-    """Row i = share of output cell i covered by each input cell (all cells measured from the same edge)."""
-    from scipy import sparse
-    rows, cols, vals = [], [], []
-    for i in range(n_out):
-        lo, hi = i * size_out, min((i + 1) * size_out, n_in * size_in)
-        j0, j1 = int(np.floor(lo / size_in + 1e-9)), int(np.ceil(hi / size_in - 1e-9))
-        for j in range(j0, min(j1, n_in)):
-            ov = min(hi, (j + 1) * size_in) - max(lo, j * size_in)
-            if ov > 1e-12 * size_out:
-                rows.append(i), cols.append(j), vals.append(ov)
-    m = sparse.csr_matrix((vals, (rows, cols)), shape=(n_out, n_in))
-    return sparse.diags(1.0 / np.asarray(m.sum(axis=1)).ravel()) @ m
+def _area_average(data: np.ndarray, size_in: float, size_out: float, n_out: int, axis: int) -> np.ndarray:
+    """Average cells of width size_in into cells of width size_out along one axis, weighting by overlap.
+
+    Works for any ratio (2:1, 3:1, 1.5:1 ...). A new cell that touches a NaN cell is NaN. Only numpy is used.
+    """
+    a = np.moveaxis(data, axis, 0)
+    n_in = a.shape[0]
+    r = size_out / size_in                              # input cells per output cell
+    lo = np.arange(n_out) * r
+    hi = np.minimum((np.arange(n_out) + 1) * r, n_in)
+    bad = np.isnan(a)
+    csum = np.vstack([np.zeros((1,) + a.shape[1:]), np.cumsum(np.where(bad, 0.0, a), axis=0)])
+    cbad = np.vstack([np.zeros((1,) + a.shape[1:]), np.cumsum(bad, axis=0)])
+
+    def integral(c, x):                                 # running total up to position x (in input cells)
+        k = np.minimum(np.floor(x + 1e-9).astype(int), n_in)
+        frac = np.clip(x - k, 0.0, None)
+        nxt = np.minimum(k, n_in - 1)
+        shape = (-1,) + (1,) * (c.ndim - 1)
+        step = c[nxt + 1] - c[nxt]                      # the value (or NaN flag) of the partly covered cell
+        return c[k] + frac.reshape(shape) * step
+
+    total = integral(csum, hi) - integral(csum, lo)
+    bad_cover = (integral(cbad, hi) - integral(cbad, lo)) > 1e-9
+    out = total / (hi - lo).reshape((-1,) + (1,) * (a.ndim - 1))
+    out[bad_cover] = np.nan
+    return np.moveaxis(out, 0, axis)
 
 
 def square_cells(raster: Raster) -> Raster | None:
@@ -61,8 +75,8 @@ def square_cells(raster: Raster) -> Raster | None:
     nrows = max(int(round(raster.height * h / big)), 1)
     data = raster.data.astype(np.float64)
     if abs(h - big) > 1e-9 * big:                       # rows are finer: average them
-        data = _overlap_weights(raster.height, h, nrows, big) @ data
+        data = _area_average(data, h, big, nrows, axis=0)
     if abs(w - big) > 1e-9 * big:                       # columns are finer: average them
-        data = (_overlap_weights(raster.width, w, ncols, big) @ data.T).T
+        data = _area_average(data, w, big, ncols, axis=1)
     transform = (big, 0.0, raster.origin_x, 0.0, -big, raster.origin_y)
     return Raster(data.astype(np.float32), transform, raster.crs, raster.nodata)
