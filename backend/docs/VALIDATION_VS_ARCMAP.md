@@ -105,7 +105,11 @@ On non-square cells (tiles above 60 N) ArcMap treats the raster as square cells 
 
 ArcMap Slope (GEODESIC) on the 65 N tile writes a 1800 x 1800 output with 2" square cells, so it resamples the 3600 x 1800 input first. The app does the same (`core/raster/resample.py`, `square_cells`: area-weighted average of the covered cells, any ratio). Result against ArcMap: mean difference 0.17 degrees (largest 1.1) on a tile whose mean slope is 7 degrees. On a square-cell tile the same check gives 0.001 degrees (99.6% of cells within 0.01). ArcMap's exact resampling inside the Slope tool is not known: its own resampled DEM (Plus tool) is nearest-neighbour, but the slope agrees better with averaging.
 
-Open: ArcMap's GEODESIC slope output drops the one-cell border (3,598 x 3,598 valid cells on the 3,600 x 3,600 tile). The app fills the border. An earlier mask comparison suggested the opposite, so this needs one more check before changing the app.
+GEODESIC slope border: ArcMap leaves the outermost ring of cells empty (3,598 x 3,598 valid cells on the 3,600 x 3,600 AW3D30 tile, 1,798 x 1,798 on the 65 N tile, 3,599 x 3,599 on the 3,601 x 3,601 SRTM tile). The app now does the same for geodesic slope on degree DEMs (`drop_border=True`). Planar slope still fills the border like ArcMap does. Geodesic aspect has not been checked for this and still fills.
+
+## Second dataset: SRTM 1 arc-second (23 Nov 2026)
+
+`n33_e073_1arc_v3.tif`, USGS SRTM 1 Arc-Second Global, tile N33 E073 (3601 x 3601, EPSG:4326, EGM96 heights, no voids). Opens in the app unchanged. ArcMap Slope GEODESIC (DEGREE) vs the app: mean 12.1314 vs 12.1301, max 72.070 vs 72.068; mean absolute difference 0.001 degrees, 99.87% of cells within 0.01 degrees, largest difference 0.106 degrees.
 
 ## Not yet validated
 Layer Statistics and Histogram, surface (3D) area, aspect and hillshade on degree DEMs beyond the cases above, and the remaining tabs. Roughness, TPI and Ruggedness have no single ArcMap tool and were compared with Raster Calculator; their numbers still need to be added to this file.

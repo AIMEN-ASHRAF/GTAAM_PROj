@@ -23,13 +23,20 @@ _OFFSETS = [(di, dj) for di in (-1, 0, 1) for dj in (-1, 0, 1)]
 
 
 def ellipsoid_slope(dem: np.ndarray, top_lat: float, dlat: float, dlon: float,
-                    units: str = "degrees", chunk_rows: int = 64) -> np.ndarray:
-    """Slope of every cell. top_lat = latitude of the raster's top edge, dlat/dlon = cell height/width in degrees."""
+                    units: str = "degrees", chunk_rows: int = 64, drop_border: bool = False) -> np.ndarray:
+    """Slope of every cell. top_lat = latitude of the raster's top edge, dlat/dlon = cell height/width in degrees.
+
+    drop_border=True leaves the outermost ring of cells empty, as ArcMap's GEODESIC slope does (checked on
+    three tiles: ArcMap returns (rows-2) x (cols-2) valid cells)."""
     if units not in ("degrees", "percent"):
         raise ValueError("units must be 'degrees' or 'percent'")
     gx, gn = ellipsoid_gradients(dem, top_lat, dlat, dlon, chunk_rows)
     rise = np.hypot(gx, gn)
-    return (np.degrees(np.arctan(rise)) if units == "degrees" else rise * 100.0).astype(np.float32)
+    out = (np.degrees(np.arctan(rise)) if units == "degrees" else rise * 100.0).astype(np.float32)
+    if drop_border:
+        out[0, :] = out[-1, :] = np.nan
+        out[:, 0] = out[:, -1] = np.nan
+    return out
 
 
 def ellipsoid_gradients(dem: np.ndarray, top_lat: float, dlat: float, dlon: float,

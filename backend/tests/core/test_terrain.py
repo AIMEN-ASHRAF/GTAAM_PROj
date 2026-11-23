@@ -291,3 +291,13 @@ def test_square_cells_works_for_any_ratio_not_just_two_to_one():
     r3 = Raster(np.arange(24, dtype=np.float32).reshape(4, 6), (1.0, 0.0, 0.0, 0.0, -2.0, 8.0), "EPSG:4326", None)
     sq3 = square_cells(r3)
     assert sq3.data.shape == (4, 3) and sq3.data[0, 0] == pytest.approx(0.5)
+
+
+def test_ellipsoid_slope_can_leave_the_border_empty_like_arcmap():
+    dem = np.tile(np.arange(8, dtype=float) * 3.0, (6, 1))
+    full = ellipsoid_slope(dem, 33.5, 1 / 3600, 1 / 3600)
+    cut = ellipsoid_slope(dem, 33.5, 1 / 3600, 1 / 3600, drop_border=True)
+    assert np.isfinite(full).all()
+    assert np.isfinite(cut).sum() == (6 - 2) * (8 - 2)
+    assert not np.isfinite(cut[0]).any() and not np.isfinite(cut[:, -1]).any()
+    assert np.allclose(cut[1:-1, 1:-1], full[1:-1, 1:-1])

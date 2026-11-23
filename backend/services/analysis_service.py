@@ -151,7 +151,7 @@ def slope(layer_id: str, units: str, method: str = "planar") -> dict:
         # true 3D slope on the WGS84 ellipsoid, like ArcMap GEODESIC. ArcMap first squares non-square
         # degree cells (JAXA 2" x 1" -> 2" x 2"); we do the same, so the result is a coarser raster.
         r = square_cells(src.raster) or src.raster
-        data = ellipsoid_slope(r.data, r.origin_y, r.pixel_h, r.pixel_w, units)
+        data = ellipsoid_slope(r.data, r.origin_y, r.pixel_h, r.pixel_w, units, drop_border=True)  # ArcMap leaves the border empty
         if r is src.raster:
             return _derive(src, data, "slope", label)
         out = add_raster_layer(r.with_data(data), f"{src.name} - {label}, square cells",
