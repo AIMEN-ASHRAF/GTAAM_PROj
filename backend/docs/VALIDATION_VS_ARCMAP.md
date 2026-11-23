@@ -113,3 +113,14 @@ GEODESIC slope border: ArcMap leaves the outermost ring of cells empty (3,598 x 
 
 ## Not yet validated
 Layer Statistics and Histogram, surface (3D) area, aspect and hillshade on degree DEMs beyond the cases above, and the remaining tabs. Roughness, TPI and Ruggedness have no single ArcMap tool and were compared with Raster Calculator; their numbers still need to be added to this file.
+
+## Copernicus GLO-30 (Slope, GEODESIC, DEGREE)
+
+| Tile | Cells | Valid cells (ArcMap / app) | Mean (ArcMap / app) | Mean abs diff | Within 0.01 deg |
+|---|---|---|---|---|---|
+| Islamabad box (square cells) | 4,211,374 | 4,211,374 / 4,211,374 | 15.4382 / 15.4383 | ~0.001 | 99.75% |
+| N65E060 (2" x 1" cells, made square) | 1800 x 1800 | 3,232,804 / 3,232,804 | 6.9155 / 6.9155 | 0.00015 | 99.99% (max 0.040) |
+
+- The app squares non-square cells (area-weighted row averaging), then runs the geodesic slope with the outer 1-cell border dropped, like ArcMap.
+- Copernicus N65E060 matches ArcMap almost exactly. The AW3D30 65N tile still shows 0.17 deg mean abs diff (max 1.135) with the same method. Cause not proven; one guess is that ArcMap resamples integer rasters (AW3D30) differently from float rasters (Copernicus).
+- Not yet tested: Copernicus near 80N (about 5" cells) and 80S.
