@@ -9,7 +9,8 @@ Idea, step by step (same as the ArcGIS "How Slope works" page):
 
 Only latitude matters (longitude just rotates the whole picture), so every cell in a row
 shares the same geometry; heights are the only thing that changes along a row.
-Works on rasters in degrees (a geographic CRS). Edges use repeated border cells, like the other tools.
+Works on rasters in degrees (a geographic CRS). Edges use repeated border cells, like the other tools,
+and a missing (NaN) neighbour takes the centre cell's height, like ArcMap. A cell with no data of its own stays NaN.
 """
 from __future__ import annotations
 
@@ -50,10 +51,13 @@ def ellipsoid_gradients(dem: np.ndarray, top_lat: float, dlat: float, dlon: floa
         c_idx = slice(r0 + 1, r1 + 1)
         sc, cc = sin_p[c_idx, None], cos_p[c_idx, None]                      # centre-row latitude terms, (n, 1)
 
+        h0 = z[c_idx, 1: cols + 1]                                           # centre heights (NaN = no data)
+
         def point(di: int, dj: int):
             """ECEF position of the neighbour at (di, dj), centre cell at longitude 0."""
             rr = slice(r0 + 1 + di, r1 + 1 + di)
             h = z[rr, 1 + dj: cols + 1 + dj]
+            h = np.where(np.isnan(h), h0, h)             # like ArcMap: a missing neighbour takes the centre height
             s, c, nr = sin_p[rr, None], cos_p[rr, None], n_rad[rr, None]
             lam = dj * dl
             x = (nr + h) * c * np.cos(lam)

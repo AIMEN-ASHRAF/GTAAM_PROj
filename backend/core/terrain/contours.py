@@ -21,13 +21,22 @@ def contour_lines(raster: Raster, interval: float, base: float = 0.0) -> dict:
     zmin, zmax = float(finite.min()), float(finite.max())
     first = base + math.ceil((zmin - base) / interval) * interval
     levels = np.arange(first, zmax + 1e-9, interval)
+    if len(levels) == 0:
+        raise ValueError(
+            f"No contour level falls inside this DEM's range ({zmin:g} to {zmax:g} m) "
+            f"with interval {interval:g} and base {base:g}. Try a smaller interval.")
     if len(levels) > MAX_LEVELS:
         raise ValueError(f"That interval gives {len(levels)} contour levels; use a larger interval.")
+    min_size = 1e-6 * min(abs(raster.pixel_w), abs(raster.pixel_h))
     gen = contour_generator(x=raster.x_coords(), y=raster.y_coords(),
                             z=np.ma.masked_invalid(raster.data))
     features = []
     for level in levels:
-        lines = [ln.tolist() for ln in gen.lines(float(level)) if len(ln) >= 2]
+        # A cell whose height is exactly the contour value can make the generator
+        # return a loop with every point identical (zero length). ArcMap draws none
+        # of these, so drop them.
+        lines = [ln.tolist() for ln in gen.lines(float(level))
+                 if len(ln) >= 2 and np.ptp(ln, axis=0).max() > min_size]
         if lines:
             features.append({"type": "Feature", "properties": {"elevation": float(level)},
                              "geometry": {"type": "MultiLineString", "coordinates": lines}})

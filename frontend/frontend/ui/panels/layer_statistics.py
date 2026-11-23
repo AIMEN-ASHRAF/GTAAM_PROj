@@ -86,7 +86,7 @@ def _value_note(label: str, unit: str) -> str:
     """Short caption saying what the statistics numbers mean and their unit."""
     notes = {
         "Hillshade": "Hillshade: brightness index 0-255 (no unit)",
-        "Curvature": "Curvature: how fast slope changes (no unit shown)",
+        "Curvature": "Curvature: how much the surface bends (+ hilltop shape, − valley shape)",
         "Aspect": "Aspect: slope direction, degrees clockwise from north",
         "Slope": "Slope: steepness, " + ("percent (%)" if unit == "%" else "degrees (°)"),
         "Elevation": "Elevation: height above datum, metres (m)",

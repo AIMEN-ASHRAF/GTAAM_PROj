@@ -216,3 +216,78 @@ def test_square_cells_leaves_square_cells_alone():
     from core.raster.model import Raster
     r = Raster(np.zeros((6, 4), np.float32), (1 / 3600, 0.0, 73.0, 0.0, -1 / 3600, 34.0), "EPSG:4326", None)
     assert square_cells(r) is None
+
+
+def test_curvature_fills_missing_neighbours_with_the_centre_value_like_arcmap():
+    dem = np.full((5, 5), 10.0)
+    dem[2, 3] = np.nan                       # east neighbour of (2, 2) is NoData
+    out = compute_curvature(dem, 2.0, 2.0)
+    assert np.isfinite(out[2, 2])            # still gets a value: the missing neighbour counts as 10
+    assert out[2, 2] == pytest.approx(0.0)
+    assert np.isnan(out[2, 3])               # a cell with no data of its own stays empty
+
+
+def test_contours_skip_zero_length_loops():
+    # Cells that sit exactly on the contour value make the raw generator return a
+    # loop whose points are all identical. ArcMap draws none, so neither do we.
+    from dataclasses import replace
+    data = np.array([[2, 1, 2, 2, 1], [2, 2, 0, 0, 0], [0, 2, 2, 0, 1],
+                     [2, 0, 2, 0, 1], [2, 0, 1, 0, 2]], dtype=np.float32)
+    r = replace(make_hill(geographic=False), data=data)
+    fc = contour_lines(r, interval=1)
+    lines = [ln for f in fc["features"] for ln in f["geometry"]["coordinates"]]
+    assert lines
+    for ln in lines:
+        assert np.ptp(np.array(ln), axis=0).max() > 0
+
+
+def test_contours_explain_when_no_level_is_in_range():
+    # make_hill spans well under 1e6, so one huge interval with a far base has no level inside.
+    with pytest.raises(ValueError, match="No contour level"):
+        contour_lines(make_hill(geographic=False), interval=1_000_000, base=500_000)
+
+
+def test_slope_missing_neighbour_rules():
+    z = np.arange(25, dtype=np.float64).reshape(5, 5)
+    z[0, :] = np.nan            # a strip of NoData along the top
+    z[3, 3] = np.nan            # a single hole with data all around it
+    planar = compute_slope(z, 1.0, 1.0, method="planar")
+    geodesic = compute_slope(z, 1.0, 1.0, method="geodesic")
+    for s in (planar, geodesic):
+        assert np.isnan(s[0, :]).all() and np.isnan(s[3, 3])        # no data in, no data out
+        assert np.isfinite(s[2:, 0]).all()                           # a clean row/column is unaffected
+    # planar (ArcMap): needs 7 of 8 neighbours. Cells just below the strip miss 3, so they stay empty;
+    # cells around the single hole miss 1, so the hole's centre value fills in.
+    assert np.isnan(planar[1, 1:4]).all()
+    assert np.isfinite(planar[2, 2]) and np.isfinite(planar[4, 4])
+    # geodesic plane fit: every cell with data gets a value
+    assert np.isfinite(geodesic).sum() == np.isfinite(z).sum()
+
+
+def test_ellipsoid_slope_fills_missing_neighbours_but_keeps_empty_cells_empty():
+    from core.terrain.slope_ellipsoid import ellipsoid_slope
+    z = (np.arange(36, dtype=np.float64).reshape(6, 6)) * 3.0
+    z[0, :] = np.nan            # a strip of NoData along the top
+    z[3, 3] = np.nan            # a single hole with data all around it
+    s = ellipsoid_slope(z, 40.0, 1 / 3600, 1 / 3600)
+    assert np.isnan(s[0, :]).all() and np.isnan(s[3, 3])
+    assert np.isfinite(s[1, 1:5]).all()                          # next to the strip: still gets a value
+    assert np.isfinite(s).sum() == np.isfinite(z).sum()
+
+
+def test_square_cells_works_for_any_ratio_not_just_two_to_one():
+    from core.raster.model import Raster
+    # 3:1 (cells 3 wide, 1 tall): three rows average into one
+    r = Raster(np.arange(24, dtype=np.float32).reshape(6, 4), (3.0, 0.0, 0.0, 0.0, -1.0, 6.0), "EPSG:4326", None)
+    sq = square_cells(r)
+    assert sq.data.shape == (2, 4) and sq.pixel_h == pytest.approx(3.0)
+    assert sq.data[0, 0] == pytest.approx((0 + 4 + 8) / 3)
+    # 1.5:1 -> each new cell covers 1.5 input rows; second cell = 0.5*row1 + 1*row2 ... weights sum to 1
+    r2 = Raster(np.tile(np.arange(6, dtype=np.float32)[:, None], (1, 3)), (1.5, 0.0, 0.0, 0.0, -1.0, 6.0), "EPSG:4326", None)
+    sq2 = square_cells(r2)
+    assert sq2.data.shape[0] == 4 and sq2.data[0, 0] == pytest.approx((0 * 1 + 1 * 0.5) / 1.5)
+    assert sq2.data[1, 0] == pytest.approx((1 * 0.5 + 2 * 1.0) / 1.5)
+    # wide cells the other way round: tall cells -> columns averaged instead
+    r3 = Raster(np.arange(24, dtype=np.float32).reshape(4, 6), (1.0, 0.0, 0.0, 0.0, -2.0, 8.0), "EPSG:4326", None)
+    sq3 = square_cells(r3)
+    assert sq3.data.shape == (4, 3) and sq3.data[0, 0] == pytest.approx(0.5)

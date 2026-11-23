@@ -25,7 +25,7 @@ def elevation_profile(raster: Raster, line, geographic: bool, samples: int = 200
     xs = np.interp(t, cum_coord, pts[:, 0])
     ys = np.interp(t, cum_coord, pts[:, 1])
     dist = np.interp(t, cum_coord, cum_real)
-    z = sample_bilinear(raster, xs, ys)
+    z = sample_bilinear(raster, xs, ys, square_cells=True)  # ArcMap reads non-square cells as square
     ok = np.isfinite(z)
     steps = np.diff(z[ok]) if ok.sum() > 1 else np.array([])
     # slope between neighbouring valid samples, in percent (rise / run * 100)

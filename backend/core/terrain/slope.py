@@ -9,15 +9,17 @@ from __future__ import annotations
 
 import numpy as np
 
-from core.raster.windows import shifted
+from core.raster.windows import shifted_filled
 
 
 def gradients(dem: np.ndarray, dx: float | np.ndarray, dy: float | np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """(gx, gn): rise per metre going east, and going north. dx, dy = cell size in metres: a number, or one value per row as an array of shape (rows, 1)."""
-    n = shifted(dem.astype(np.float64))
+    """(gx, gn): rise per metre going east, and going north. dx, dy = cell size in metres: a number, or one value per row as an array of shape (rows, 1).
+    Like ArcMap's planar slope: a cell needs at least 7 of its 8 neighbours; one missing neighbour takes the centre value."""
+    n = shifted_filled(dem.astype(np.float64), max_missing=1)
     gx = ((n["ne"] + 2 * n["e"] + n["se"]) - (n["nw"] + 2 * n["w"] + n["sw"])) / (8 * dx)
     gn = ((n["nw"] + 2 * n["n"] + n["ne"]) - (n["sw"] + 2 * n["s"] + n["se"])) / (8 * dy)
-    return gx, gn
+    empty = np.isnan(n["c"])                     # the formulas skip the centre, so keep no-data cells empty
+    return np.where(empty, np.nan, gx), np.where(empty, np.nan, gn)
 
 
 METHODS = ("planar", "geodesic")
@@ -25,10 +27,11 @@ METHODS = ("planar", "geodesic")
 
 def plane_fit_gradients(dem: np.ndarray, dx: float | np.ndarray, dy: float | np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """(gx, gn) of the best-fit plane through the 3x3 cells: three cells per side, all weight 1, divided by 6 (3 rows x 2 cells apart)."""
-    n = shifted(dem.astype(np.float64))
+    n = shifted_filled(dem.astype(np.float64))
     gx = ((n["ne"] + n["e"] + n["se"]) - (n["nw"] + n["w"] + n["sw"])) / (6 * dx)
     gn = ((n["nw"] + n["n"] + n["ne"]) - (n["sw"] + n["s"] + n["se"])) / (6 * dy)
-    return gx, gn
+    empty = np.isnan(n["c"])                     # the formulas skip the centre, so keep no-data cells empty
+    return np.where(empty, np.nan, gx), np.where(empty, np.nan, gn)
 
 
 def compute_slope(dem: np.ndarray, dx: float | np.ndarray, dy: float | np.ndarray,

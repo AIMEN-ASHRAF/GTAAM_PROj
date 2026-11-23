@@ -1,6 +1,6 @@
 # Validation against ArcMap 10.8
 
-Terrain functions checked against ArcMap 10.8 (Spatial Analyst) on 29 Oct 2026.
+Functions checked against ArcMap 10.8 (Spatial Analyst, 3D Analyst) between 29 Oct and 23 Nov 2026.
 
 **Test data**
 - `ALPSMLC30_N033E073_DSM.tif`: ALOS AW3D30 tile, EPSG:4326, 3600 x 3600, 0.000278 deg cells (geographic)
@@ -68,5 +68,44 @@ ArcMap GEODESIC on the same lines is longer (2,500.32 / 84,865.94 / 94,610.88 m,
 
 Not yet compared with ArcMap: measuring a loaded line layer.
 
+## Slope edges, percent rise, contours on a second DEM (23 Nov 2026)
+
+| Check | Result |
+|---|---|
+| Percent-rise slope | Formula verified (rise x 100 = tan(slope) x 100). Min and max match ArcMap exactly. |
+| Planar slope, edge cells | ArcMap fills a missing neighbour for slope, so border cells still get a value (needs at least 7 of 8 neighbours). Valid cells on the Dorre Island DEM: ArcMap 2,490,179, app 2,490,202. The value used for the one missing neighbour is close but not identical to ArcMap's (mean 9.4339 vs 9.4375). Curvature and aspect/hillshade reuse the same rule; curvature fills every missing neighbour with the centre value and matches ArcMap's valid-cell count (2,499,861). |
+| Contours (Dorre Island, UTM and degree DEMs) | Same levels. ArcMap lines are about 0.3 to 0.5% longer (roughly twice the vertices) and ArcMap omits about 76 tiny loops. The app now skips zero-length loops and says so when no level falls inside the DEM range. |
+
+## Area (geographic and projected polygons)
+
+Test polygons drawn clockwise (ArcMap reads counter-clockwise shapefile rings as empty). ArcMap: Add Geometry Attributes (AREA_GEODESIC, PERIMETER_LENGTH_GEODESIC, and the planar fields). App: `polygon_area`.
+
+| Polygon | ArcMap | App | Difference |
+|---|---|---|---|
+| Degree DEM, geodesic (73.3-73.5 E, 33.3-33.5 N) | 412,720,676.09 m2; perimeter 81,576.2803 m | 412,720,715.49 m2; 81,576.2746 m | 39 m2 in 412 km2 (1e-7); perimeter 6 mm |
+| UTM 43N, planar (10 km square) | 100,000,000 m2; perimeter 40,000 m | 100,000,000 m2; 40,000 m | 0 |
+
+Degree-DEM line length (geodesic): ArcMap 72,725.7757 m, app 72,725.7283 m (5 cm in 72.7 km). UTM line (planar): 48,899.79938 m both.
+
+Not compared: surface (3D) area, which is hidden in the app behind a flag.
+
+## Elevation Profile
+
+ArcMap 3D Analyst, Stack Profile, on a 3-point line per DEM. The app profile was sampled at the same positions as ArcMap's output points (ArcMap samples about once per cell).
+
+| DEM | ArcMap points | Largest difference |
+|---|---|---|
+| Degree tile (`ALPSMLC30_N033E073_DSM.tif`) | 2,645 | 0.00003 m |
+| UTM (`dem_utm43.tif`) | 1,711 | 0.00003 m |
+| 65 N tile (`ALPSMLC30_N065E060_DSM.tif`, 2" x 1" cells) | 2,668 | 0.00002 m |
+
+On non-square cells (tiles above 60 N) ArcMap treats the raster as square cells of the smaller side before interpolating. The app does the same for the profile, for any cell ratio (`sample_bilinear(..., square_cells=True)`). Without it the 65 N profile differed by up to 11.8 m.
+
+## Non-square cells and GEODESIC slope
+
+ArcMap Slope (GEODESIC) on the 65 N tile writes a 1800 x 1800 output with 2" square cells, so it resamples the 3600 x 1800 input first. The app does the same (`core/raster/resample.py`, `square_cells`: area-weighted average of the covered cells, any ratio). Result against ArcMap: mean difference 0.17 degrees (largest 1.1) on a tile whose mean slope is 7 degrees. On a square-cell tile the same check gives 0.001 degrees (99.6% of cells within 0.01). ArcMap's exact resampling inside the Slope tool is not known: its own resampled DEM (Plus tool) is nearest-neighbour, but the slope agrees better with averaging.
+
+Open: ArcMap's GEODESIC slope output drops the one-cell border (3,598 x 3,598 valid cells on the 3,600 x 3,600 tile). The app fills the border. An earlier mask comparison suggested the opposite, so this needs one more check before changing the app.
+
 ## Not yet validated
-Layer Statistics and Histogram, Area, Elevation Profile, and the remaining tabs. Roughness, TPI and Ruggedness have no single ArcMap tool and were compared with Raster Calculator; their numbers still need to be added to this file.
+Layer Statistics and Histogram, surface (3D) area, aspect and hillshade on degree DEMs beyond the cases above, and the remaining tabs. Roughness, TPI and Ruggedness have no single ArcMap tool and were compared with Raster Calculator; their numbers still need to be added to this file.
