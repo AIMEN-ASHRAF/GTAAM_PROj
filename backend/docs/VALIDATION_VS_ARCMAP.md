@@ -111,73 +111,24 @@ GEODESIC slope border: ArcMap leaves the outermost ring of cells empty (3,598 x 
 
 `n33_e073_1arc_v3.tif`, USGS SRTM 1 Arc-Second Global, tile N33 E073 (3601 x 3601, EPSG:4326, EGM96 heights, no voids). Opens in the app unchanged. ArcMap Slope GEODESIC (DEGREE) vs the app: mean 12.1314 vs 12.1301, max 72.070 vs 72.068; mean absolute difference 0.001 degrees, 99.87% of cells within 0.01 degrees, largest difference 0.106 degrees.
 
+## Curvature on a degree DEM (24 Nov 2026)
+
+ArcMap's Curvature (Spatial Analyst) has **no geodesic or unit option** - it shows a "needs a Z factor" warning on a
+degree DEM and then uses the cell size in degrees. Run on `ALPSMLC30_N033E073_DSM.tif` (z factor 1) its output is
+identical, cell for cell (max difference 0), to the same Zevenbergen-Thorne formula with the cell size set to
+0.000278 (degrees). Values reach plus/minus 1.5e11, so ArcMap's degree-DEM curvature is not usable. The app instead converts each
+row's cell size to metres first, and gets values of -18 to +15 (std 1.08) on the same tile.
+
+Because ArcMap cannot give a correct answer here, the app was checked against an exact answer instead:
+a synthetic degree DEM shaped as a smooth bowl (curvature exactly -0.2) gives -0.2009, -0.2001, -0.1987 and -0.1983
+at 0, 33, 65 and 80 degrees latitude (worst error 0.9 %, from a sphere being used in the test and the ellipsoid in the app).
+This is now the test `tests/core/test_curvature_degrees.py`.
+As a rough cross-check, ArcMap's Curvature on the UTM version of Copernicus N65 and the app on the degree version of the
+same tile have similar distributions (std 0.27 vs 0.34); they are not identical because the UTM grid is coarser and
+curvature depends on cell size. Honest wording: "on a degree DEM the app converts to metres before computing curvature;
+ArcMap cannot, so it was verified against a known surface, not against ArcMap output."
+
 ## Not yet validated
-Layer Statistics and Histogram, surface (3D) area, aspect and hillshade on degree DEMs beyond the cases above, and the remaining tabs. Roughness, TPI and Ruggedness have no single ArcMap tool and were compared with Raster Calculator; their numbers still need to be added to this file.
-
-## Copernicus GLO-30 (Slope, GEODESIC, DEGREE)
-
-| Tile | Cells | Valid cells (ArcMap / app) | Mean (ArcMap / app) | Mean abs diff | Within 0.01 deg |
-|---|---|---|---|---|---|
-| Islamabad box (square cells) | 4,211,374 | 4,211,374 / 4,211,374 | 15.4382 / 15.4383 | ~0.001 | 99.75% |
-| N65E060 (2" x 1" cells, made square) | 1800 x 1800 | 3,232,804 / 3,232,804 | 6.9155 / 6.9155 | 0.00015 | 99.99% (max 0.040) |
-
-- The app squares non-square cells (area-weighted row averaging), then runs the geodesic slope with the outer 1-cell border dropped, like ArcMap.
-- Copernicus N65E060 matches ArcMap almost exactly. The AW3D30 65N tile still shows 0.17 deg mean abs diff (max 1.135) with the same method. Cause not proven; one guess is that ArcMap resamples integer rasters (AW3D30) differently from float rasters (Copernicus).
-- Not yet tested: Copernicus near 80N (about 5" cells) and 80S.
-
-## Copernicus GLO-30 at 80N and 80S (5" x 1" cells)
-
-Tiles N80 W078 (Ellesmere Island) and S81 E160 (Antarctica, negative latitudes), each 720 cols x 3600 rows, no holes. ArcMap Slope, GEODESIC, DEGREE; output 720 x 720 (5" square = the larger side, same rule as at 65N).
-
-| Tile | Valid cells (ArcMap / app) | Mean (ArcMap / app) | Mean abs diff | Max diff | Within 0.01 deg | Within 0.1 deg |
-|---|---|---|---|---|---|---|
-| N80 W078 | 515,524 / 515,524 | 8.6218 / 8.6399 | 0.160 | 11.98 | 17.1% | 65.2% |
-| S81 E160 | 515,524 / 515,524 | 3.2943 / 3.3118 | 0.147 | 9.11 | 7.7% | 55.3% |
-
-- Matches ArcMap: output grid size and cell size, valid-cell count (border rule), sign handling for the southern hemisphere, and the overall mean to about 0.2%.
-- Does not match cell by cell: when five 1" rows are combined into one 5" row, ArcMap's exact rule is unknown. The app uses an area-weighted block mean, which is among the closest options tried (nearest row, triangle and Hann kernels, rows 1-3 mean). A triangle kernel over 5 rows is marginally closer (0.134) but still not exact, so the app was left unchanged.
-- Result by ratio so far: 1:1 exact (~0.001 deg), 2:1 exact on float data (Copernicus N65, 0.0002 deg), 2:1 on integer data (AW3D30 65N) 0.17 deg, 5:1 about 0.15 deg.
-- Practical meaning: at 80 deg latitude the statistics agree closely, but individual cell values can differ by a degree or more on steep ground (max about 12 deg).
-
-## Aspect (GEODESIC) and re-check of Hillshade and Curvature (24 Nov 2026)
-
-**Aspect, GEODESIC, Copernicus N65E060 (2" x 1" cells, squared first):**
-
-| Item | ArcMap | App |
-|---|---|---|
-| Valid cells | 3,232,804 | 3,232,804 (after fix) |
-| Mean aspect | 186.0615 | 186.0597 |
-| Mean abs difference | - | 0.006 deg |
-| Cells within 0.01 / 0.1 / 1 deg | - | 90.1% / 99.69% / 99.997% |
-| Cells off by more than 1 deg | - | 106 of 3.2 million (near-flat ground) |
-
-- ArcMap's GEODESIC aspect leaves the outermost ring empty, like GEODESIC slope. The app filled it (7,196 extra cells); fixed with `drop_border=True`.
-- ArcMap writes -1 for flat cells and calls a cell flat when its whole 3 x 3 window has one height. The app used a gradient threshold that was too tight for ellipsoid gradients, so about 315 flat cells got a meaningless direction. Fixed with `flat_window_mask`. About 41 other cells ArcMap calls flat (symmetric slopes whose gradient cancels) still differ.
-
-**Re-check after the 23-24 Nov code changes (projected `dem_utm43.tif`):** Curvature still matches on 100% of pixels (max difference 1e-15; 12,590,707 valid cells in both). Hillshade (Az 315, Alt 45, Z 1) still matches on 100% of pixels after rounding down (mean 171.51 in both).
-
-**Not done:** Curvature on a degree DEM (ArcMap's Curvature dialog would not open in the session); Hillshade and Aspect (planar) on Copernicus tiles above 50 N.
-
-
-## Quality & Statistics (Layer Statistics, Histogram, NoData Check, Outlier Check)
-
-Tested on 4 rasters: AW3D30 N033E073 (integer, 3600x3600), Copernicus N65 (float), and two UTM-reprojected
-versions of N65 that have NoData borders (about 10 % of the cells). ArcMap numbers come from ArcMap 10.8:
-**Calculate Statistics with skip factor 1** (every cell, written to the file's .aux.xml) and
-**Build Raster Attribute Table** (exact count of cells per value).
-
-| Tool | What was compared | Result |
-|---|---|---|
-| Layer Statistics | min, max, mean, std dev on all 4 rasters | min and max identical; mean identical to 11 digits; std dev identical to 11 digits **after** the change below |
-| Histogram | AW3D30 (12,960,000 cells, 3,147 distinct heights): app bins vs the same bins rebuilt from ArcMap's per-value counts, 50 and 256 bins | every bin identical (0 bins differ), totals equal |
-| NoData Check | UTM41N: ArcMap valid cells 5,827,626 vs app 5,827,626; so NoData = 657,684 in both. AW3D30: 0 in both | identical |
-| Outlier Check | ArcMap has no outlier tool. Recomputed by hand from ArcMap's own value table (own weighted percentile, no numpy) | IQR fences and outlier counts identical; z-score fences identical to 4 decimals, counts identical |
-
-Two small differences were found and fixed on the app side:
-1. **Standard deviation** - ArcMap divides by n-1 (sample form); the app divided by n. The gap was about 1e-7 of the
-   value on these big rasters but it is now exactly ArcMap's definition. The z-score outlier rule uses the same std.
-2. **Mean accuracy** - the app added up in 32-bit (mean off by about 0.0007 on the AW3D30 tile); it now adds up in 64-bit.
-
-Not compared with ArcMap (no matching ArcMap figure): the **median** shown by Layer Statistics, and the
-Outlier Check itself (checked by hand calculation only, as above). The histogram default is 50 bins; ArcMap's
-display histogram uses 256, and both bin layouts were checked.
+Surface (3D) area (hidden in the app behind a flag). Hillshade and Aspect (planar) on Copernicus tiles above 50 N.
+Layer Statistics, Histogram, NoData Check and Outlier Check are done (see above). Roughness, TPI and Ruggedness have no single ArcMap tool and were
+compared with Raster Calculator; their numbers still need to be added to this file.
