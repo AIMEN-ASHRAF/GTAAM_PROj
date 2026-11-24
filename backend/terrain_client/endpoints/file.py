@@ -38,9 +38,10 @@ class FileApi(Endpoints):
         return self._h.put("/file/project/settings", json=clean({
             "analyze_in_utm": analyze_in_utm, "utm_zone": utm_zone, "resampling": resampling}))
 
-    def utm_preview(self, layer_id: str) -> dict:
-        """Which UTM zone 'Analyze in UTM' would use for a layer: {"applies", "zone", "epsg", "reason"}."""
-        return self._h.get("/file/project/settings/utm-preview", params={"layer_id": layer_id})
+    def utm_preview(self, layer_id: str, zone: str | None = None) -> dict:
+        """Which UTM zone 'Analyze in UTM' would use for a layer: {"applies", "zone", "epsg", "reason"}.
+        `zone` previews one that is not saved yet ("auto" or "43N")."""
+        return self._h.get("/file/project/settings/utm-preview", params=clean({"layer_id": layer_id, "zone": zone}))
 
     # ---- Add Data ----
     def add_raster(self, path: str, name: str | None = None) -> dict:

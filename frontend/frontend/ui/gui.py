@@ -35,6 +35,7 @@ from ui.panels.layer_statistics import (
     ContentsPane, InspectorPane, Layer, SampleWorkspace, SettingsForm,
 )
 from ui.panels.map_bar import PROFILE_COLORS, MapSection
+from ui.panels.project_settings import ProjectSettingsDialog
 
 # order of the ribbon tabs
 TAB_MODULES = [file_tab, View, Analysis, Tools, Terrain_Editing, Terrain_Mosaic]
@@ -1781,6 +1782,18 @@ class MainWindow(QMainWindow):
         ) from e
 
 
+    def api_put(self, path: str, payload: dict | None = None) -> dict:
+        wait_until_ready()
+        url = f"{BASE_URL}{API_PREFIX}{path}"
+        try:
+            response = httpx.put(url, json=payload or {}, timeout=60)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(f"API error {e.response.status_code}: {e.response.text}") from e
+        except httpx.RequestError as e:
+            raise RuntimeError(f"Backend connection failed: {e}") from e
+
     def api_get(self, path: str, params: dict | None = None) -> dict:
         wait_until_ready()
         url = f"{BASE_URL}{API_PREFIX}{path}"
@@ -2804,6 +2817,34 @@ class MainWindow(QMainWindow):
         if p.suffix.lower() not in (PROJECT_EXT, ".agtaam", ".json"):
             p = p.with_suffix(PROJECT_EXT)
         return self._save_to(p, p.stem, "/file/project/save-as")
+
+    def act_project_settings(self) -> None:
+        """File > Project > Project Settings: Analyze in UTM, UTM zone, resampling (saved in the project)."""
+        try:
+            current = self.api_get("/file/project/settings")
+        except Exception as exc:
+            self.show_toast(f"Project settings: {_message(exc)}")
+            return
+        layer = next(iter(self.ws.rasters()), None)
+
+        def preview(zone: str):
+            if layer is None:
+                return None
+            return self.api_get("/file/project/settings/utm-preview", {"layer_id": layer.id, "zone": zone})
+
+        dlg = ProjectSettingsDialog(self, current, layer.name if layer else None, preview)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        new = dlg.values()
+        if new == current:
+            return
+        try:
+            self.api_put("/file/project/settings", new)
+        except Exception as exc:
+            QMessageBox.warning(self, "Project Settings", f"Could not save the settings:\n{_message(exc)}")
+            return
+        self.mark_dirty()
+        self.show_toast("Analyze in UTM is ON" if new["analyze_in_utm"] else "Project settings saved")
 
     def _save_to(self, path: Path, name: str, route: str) -> bool:
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)

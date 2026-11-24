@@ -62,14 +62,15 @@ def update_project_settings(changes: dict) -> dict:
     return project.update_settings(changes)
 
 
-def utm_preview(layer_id: str) -> dict:
-    """Which UTM zone 'Analyze in UTM' would use for this layer (without changing anything)."""
+def utm_preview(layer_id: str, zone: str | None = None) -> dict:
+    """Which UTM zone 'Analyze in UTM' would use for this layer (without changing anything).
+    `zone` tries a zone that is not saved yet ('auto' or '43N'); without it the saved zone is used."""
     from shared.layer_store import get_raster_layer
     r = get_raster_layer(layer_id).raster
     if not is_geographic(r):
         return {"applies": False, "reason": "This layer is already in a metre-based coordinate system."}
     try:
-        epsg = utm.choose_zone(r, project.settings["utm_zone"])
+        epsg = utm.choose_zone(r, zone or project.settings["utm_zone"])
     except ValueError as e:
         return {"applies": False, "reason": str(e)}
     return {"applies": True, "zone": utm.zone_label(epsg), "epsg": epsg}

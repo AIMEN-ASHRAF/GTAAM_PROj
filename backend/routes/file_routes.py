@@ -62,9 +62,10 @@ def put_project_settings(req: ProjectSettingsUpdate):
 
 
 @project_router.get("/settings/utm-preview", response_model=UtmPreview)
-def utm_preview(layer_id: str):
-    """Which UTM zone 'Analyze in UTM' would use for a layer, before running anything."""
-    return service.utm_preview(layer_id)
+def utm_preview(layer_id: str, zone: str | None = None):
+    """Which UTM zone 'Analyze in UTM' would use for a layer, before running anything.
+    Optional `zone` ('auto' or '43N') previews a zone that is not saved yet."""
+    return service.utm_preview(layer_id, zone)
 
 
 # ======================================================================

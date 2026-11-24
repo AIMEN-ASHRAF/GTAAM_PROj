@@ -17,5 +17,8 @@ GROUP = {
              
         dict(id="save-project-as", label="Save As", icon="save_as",
              kind="action", action="save_project_as", tip="Save Project As"),
+
+        dict(id="project-settings", label="Project Settings", icon="sliders",
+             kind="action", action="project_settings", tip="Project Settings: Analyze in UTM, zone, resampling"),
     ],
 }
