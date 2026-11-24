@@ -11,7 +11,7 @@ def _layer(client_hill=None):
 
 def test_defaults_and_partial_update(client):
     s = client.get(f"{API}/file/project/settings").json()
-    assert s == {"analyze_in_utm": False, "utm_zone": "auto", "resampling": "bilinear"}
+    assert (s["analyze_in_utm"], s["utm_zone"], s["resampling"]) == (False, "auto", "bilinear")
     r = client.put(f"{API}/file/project/settings", json={"analyze_in_utm": True})
     assert r.json()["analyze_in_utm"] is True and r.json()["resampling"] == "bilinear"    # others unchanged
 
@@ -68,7 +68,8 @@ def test_settings_are_saved_and_reopened(client, tmp_path):
     client.post(f"{API}/file/project/new", json={"name": "other"})
     assert client.get(f"{API}/file/project/settings").json()["analyze_in_utm"] is False       # a new project starts at defaults
     client.post(f"{API}/file/project/open", json={"path": path})
-    assert client.get(f"{API}/file/project/settings").json() == {"analyze_in_utm": True, "utm_zone": "43N", "resampling": "cubic"}
+    back = client.get(f"{API}/file/project/settings").json()
+    assert (back["analyze_in_utm"], back["utm_zone"], back["resampling"]) == (True, "43N", "cubic")
 
 
 def test_no_utm_beyond_84_north(client):
@@ -77,3 +78,16 @@ def test_no_utm_beyond_84_north(client):
     client.put(f"{API}/file/project/settings", json={"analyze_in_utm": True})
     resp = client.post(f"{API}/analysis/surface-analysis/slope", json={"layer_id": lid, "units": "degrees"})
     assert resp.status_code == 400 and "84" in resp.text
+
+
+def test_all_setting_groups_have_defaults_and_validate(client):
+    s = client.get(f"{API}/file/project/settings").json()
+    assert s["distance_unit"] == "metres" and s["slope_unit"] == "degrees" and s["decimal_places"] == 4
+    assert s["hillshade_azimuth"] == 315 and s["contour_interval"] == 100 and s["auto_save_minutes"] == 0
+    r = client.put(f"{API}/file/project/settings",
+                   json={"slope_unit": "percent", "area_unit": "acres", "decimal_places": 2, "author": "Asif"})
+    assert r.status_code == 200 and r.json()["slope_unit"] == "percent" and r.json()["decimal_places"] == 2
+    assert client.get(f"{API}/file/project/settings").json()["author"] == "Asif"
+    for bad in ({"decimal_places": 9}, {"slope_unit": "radians"}, {"hillshade_altitude": 95},
+                {"contour_interval": 0}, {"auto_save_minutes": 7}):
+        assert client.put(f"{API}/file/project/settings", json=bad).status_code == 422

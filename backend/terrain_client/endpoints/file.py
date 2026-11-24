@@ -32,11 +32,13 @@ class FileApi(Endpoints):
         """{"analyze_in_utm": False, "utm_zone": "auto", "resampling": "bilinear"}"""
         return self._h.get("/file/project/settings")
 
-    def update_project_settings(self, analyze_in_utm: bool | None = None, utm_zone: str | None = None,
-                                resampling: str | None = None) -> dict:
-        """Change only the fields given. utm_zone: "auto" or e.g. "43N"; resampling: nearest | bilinear | cubic."""
-        return self._h.put("/file/project/settings", json=clean({
-            "analyze_in_utm": analyze_in_utm, "utm_zone": utm_zone, "resampling": resampling}))
+    def update_project_settings(self, **changes) -> dict:
+        """Change only the fields given, e.g. update_project_settings(analyze_in_utm=True, slope_unit="percent").
+        Fields: analyze_in_utm, utm_zone ("auto"/"43N"), resampling, distance_unit, area_unit, height_unit,
+        slope_unit, match_arcmap, slope_method, hillshade_azimuth, hillshade_altitude, contour_interval,
+        decimal_places, scale_bar, coordinate_format, author, auto_save_minutes, preview_resolution,
+        memory_limit_mb. See docs/PROJECT_SETTINGS.md for the allowed values."""
+        return self._h.put("/file/project/settings", json=clean(changes))
 
     def utm_preview(self, layer_id: str, zone: str | None = None) -> dict:
         """Which UTM zone 'Analyze in UTM' would use for a layer: {"applies", "zone", "epsg", "reason"}.

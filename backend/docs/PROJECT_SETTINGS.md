@@ -40,3 +40,23 @@ Later: distance and area units, decimal places, default colour ramp (already sto
 
 Degrees, geodesic: mean 12.99 deg. UTM, bilinear: mean 12.62-12.71 deg (about 2-3 % lower because bilinear resampling smooths the terrain a little).
 Use `nearest` if you need the original heights kept as they are.
+
+
+## All settings (24 Nov 2026 update)
+The window now has five pages (Coordinate System, Units & Analysis, Display, Project, Performance). Every field is
+validated by the backend and saved in the .gtm file; an old project gets the defaults.
+
+| Group | Field | Allowed values (default first) |
+|---|---|---|
+| Coordinate system | analyze_in_utm / utm_zone / resampling | false, true / auto, 1N..60S / bilinear, nearest, cubic |
+| Units | distance_unit | metres, kilometres, feet, miles |
+| | area_unit | hectares, square_metres, square_kilometres, acres |
+| | height_unit / slope_unit | metres, feet / degrees, percent |
+| Analysis defaults | match_arcmap, slope_method | true / planar, geodesic |
+| | hillshade_azimuth, hillshade_altitude, contour_interval | 315, 45, 100 |
+| Display | decimal_places, scale_bar, coordinate_format | 4 (0-8), true, decimal / dms |
+| Project | author, auto_save_minutes | "", 0 / 1, 5, 10, 30 |
+| Performance | preview_resolution, memory_limit_mb | high (low, medium, high, full), 0 / 512..4096 |
+
+**What changes results today:** Analyze in UTM, UTM zone, resampling (backend). **Stored only so far (the frontend
+reads them and must apply them):** units, analysis defaults, display, author, auto-save, performance.

@@ -140,10 +140,32 @@ class FullscreenRequest(BaseModel):
 
 
 class ProjectSettings(BaseModel):
-    """Per-project analysis settings (saved inside the project file)."""
+    """Per-project settings (saved inside the project file)."""
+    # coordinate system
     analyze_in_utm: bool = False                    # move degree DEMs to UTM (metres) before terrain analysis
     utm_zone: str = "auto"                          # 'auto' or e.g. '43N' / '41S'
     resampling: Literal["nearest", "bilinear", "cubic"] = "bilinear"   # used when moving to UTM
+    # units (how results are shown)
+    distance_unit: Literal["metres", "kilometres", "feet", "miles"] = "metres"
+    area_unit: Literal["square_metres", "hectares", "square_kilometres", "acres"] = "hectares"
+    height_unit: Literal["metres", "feet"] = "metres"
+    slope_unit: Literal["degrees", "percent"] = "degrees"
+    # analysis defaults (a tool can still override them)
+    match_arcmap: bool = True
+    slope_method: Literal["planar", "geodesic"] = "planar"
+    hillshade_azimuth: float = Field(315.0, ge=0, le=360)
+    hillshade_altitude: float = Field(45.0, ge=0, le=90)
+    contour_interval: float = Field(100.0, gt=0)
+    # display
+    decimal_places: int = Field(4, ge=0, le=8)
+    scale_bar: bool = True
+    coordinate_format: Literal["decimal", "dms"] = "decimal"
+    # project
+    author: str = Field("", max_length=120)
+    auto_save_minutes: Literal[0, 1, 5, 10, 30] = 0   # 0 = off
+    # performance
+    preview_resolution: Literal["low", "medium", "high", "full"] = "high"
+    memory_limit_mb: Literal[0, 512, 1024, 2048, 4096] = 0   # 0 = no limit
 
 
 class ProjectSettingsUpdate(BaseModel):
@@ -151,6 +173,22 @@ class ProjectSettingsUpdate(BaseModel):
     analyze_in_utm: bool | None = None
     utm_zone: str | None = Field(default=None, pattern=r"^(?i:auto|([1-9]|[1-5][0-9]|60)[NS])$")
     resampling: Literal["nearest", "bilinear", "cubic"] | None = None
+    distance_unit: Literal["metres", "kilometres", "feet", "miles"] | None = None
+    area_unit: Literal["square_metres", "hectares", "square_kilometres", "acres"] | None = None
+    height_unit: Literal["metres", "feet"] | None = None
+    slope_unit: Literal["degrees", "percent"] | None = None
+    match_arcmap: bool | None = None
+    slope_method: Literal["planar", "geodesic"] | None = None
+    hillshade_azimuth: float | None = Field(default=None, ge=0, le=360)
+    hillshade_altitude: float | None = Field(default=None, ge=0, le=90)
+    contour_interval: float | None = Field(default=None, gt=0)
+    decimal_places: int | None = Field(default=None, ge=0, le=8)
+    scale_bar: bool | None = None
+    coordinate_format: Literal["decimal", "dms"] | None = None
+    author: str | None = Field(default=None, max_length=120)
+    auto_save_minutes: Literal[0, 1, 5, 10, 30] | None = None
+    preview_resolution: Literal["low", "medium", "high", "full"] | None = None
+    memory_limit_mb: Literal[0, 512, 1024, 2048, 4096] | None = None
 
 
 class UtmPreview(BaseModel):

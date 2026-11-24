@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.panels.icon_generator import icon, pixmap
+from ui.panels.crs_info import describe_crs, pixel_unit
 
 DASH = "—"
 
@@ -1329,26 +1330,25 @@ class InspectorPane(QFrame):
                     else (f"{lyr.data.shape[1]} × {lyr.data.shape[0]}"
                           if lyr.data is not None else DASH)
                 )
-                pixel_size = (
-                    f"{lyr.pixel_size[0]:g} × {lyr.pixel_size[1]:g}"
-                    if lyr.pixel_size is not None else f"{self.ws.CELL:g} × {self.ws.CELL:g} m"
-                )
                 crs = lyr.crs or (
                     self.ws.CRS_NAME if lyr.id in ("dem", "east") else DASH
                 )
-                epsg = crs.split(":", 1)[1] if crs.upper().startswith("EPSG:") else DASH
+                pixel_size = (
+                    f"{lyr.pixel_size[0]:g} × {lyr.pixel_size[1]:g}{pixel_unit(crs)}"
+                    if lyr.pixel_size is not None else f"{self.ws.CELL:g} × {self.ws.CELL:g} m"
+                )
                 nodata_count = stats.get("nodata_count") if stats else None
                 bounds = (
                     ", ".join(f"{coordinate:g}" for coordinate in lyr.bounds)
                     if lyr.bounds is not None else DASH
                 )
-                rows = [("Coordinate system", crs), ("EPSG", epsg),
+                rows = [*describe_crs(None if crs == DASH else crs),
                         ("Pixel size", pixel_size), ("Dimensions", dimensions),
                         ("NoData pixels", str(nodata_count) if nodata_count is not None else DASH),
                         ("NoData value", str(lyr.nodata) if lyr.nodata is not None else DASH),
                         ("Bounds", bounds), ("Bands", "1")]
             else:
-                rows = [("Coordinate system", DASH), ("EPSG", DASH), ("Pixel size", DASH),
+                rows = [("Coordinate system", DASH), ("Type", DASH), ("EPSG", DASH), ("Pixel size", DASH),
                         ("Dimensions", DASH), ("NoData pixels", DASH),
                         ("NoData value", DASH), ("Bounds", DASH), ("Bands", DASH)]
             section = "Properties"

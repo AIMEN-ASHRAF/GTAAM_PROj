@@ -35,7 +35,21 @@ def default_workspace() -> dict:
 
 def default_settings() -> dict:
     """Per-project analysis settings. Saved in the project file ("settings")."""
-    return {"analyze_in_utm": False, "utm_zone": "auto", "resampling": "bilinear"}
+    return {
+        # coordinate system
+        "analyze_in_utm": False, "utm_zone": "auto", "resampling": "bilinear",
+        # units
+        "distance_unit": "metres", "area_unit": "hectares", "height_unit": "metres", "slope_unit": "degrees",
+        # analysis defaults
+        "match_arcmap": True, "slope_method": "planar", "hillshade_azimuth": 315.0, "hillshade_altitude": 45.0,
+        "contour_interval": 100.0,
+        # display
+        "decimal_places": 4, "scale_bar": True, "coordinate_format": "decimal",
+        # project
+        "author": "", "auto_save_minutes": 0,
+        # performance
+        "preview_resolution": "high", "memory_limit_mb": 0,
+    }
 
 
 def _now() -> str:
