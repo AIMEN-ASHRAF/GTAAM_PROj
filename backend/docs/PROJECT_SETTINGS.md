@@ -63,3 +63,11 @@ contour interval): a tool field tagged `setting="..."` opens with the project's 
 Also applied: Match ArcMap (forces planar and hillshade 315/45 in the tool defaults), scale bar (same switch as View), coordinate format (decimal or DMS in the Pixel Inspector), auto-save (checked once a minute; saves only a project that already has a file and unsaved changes).
 Author: stamped as a credit line (author and date) on exported map images.
 **Stored only so far:** preview resolution, memory limit.
+
+
+## Known limitation: layers in different coordinate systems on the map
+The map canvas draws every raster on its own pixel grid, from the top-left. A UTM result (3326 x 3949 cells) drawn over the
+degree DEM (3600 x 3600 cells) therefore does not line up, even though the values are correct. The Properties panel now
+shows "Map placement: Own grid" for such a layer. A true fix means placing each raster by its real bounds in the canvas
+coordinate system, which touches contours, measure tools, the pixel inspector and region editing (all use cell
+coordinates today). It should be done by the frontend owner with the GUI open to test.

@@ -1414,6 +1414,10 @@ class InspectorPane(QFrame):
                         ("NoData pixels", str(nodata_count) if nodata_count is not None else DASH),
                         ("NoData value", str(lyr.nodata) if lyr.nodata is not None else DASH),
                         ("Bounds", bounds), ("Bands", "1")]
+                base = next((r for r in self.ws.rasters() if r.id != lyr.id and r.crs), None)
+                if base is not None and lyr.crs and str(base.crs) != str(lyr.crs):
+                    # the map draws every raster on its own cell grid, so layers in different systems do not overlap
+                    rows.append(("Map placement", f"Own grid (differs from {base.name}: {base.crs})"))
             else:
                 rows = [("Coordinate system", DASH), ("Type", DASH), ("EPSG", DASH), ("Pixel size", DASH),
                         ("Dimensions", DASH), ("NoData pixels", DASH),
