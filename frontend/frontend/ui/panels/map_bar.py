@@ -39,6 +39,8 @@ class MapCanvas(QWidget):
         self.draft: list[tuple[float, float]] = []
         self.measure_done = False             # a measured line is finished and stays on the map
         self.measure_kind = "line"            # line (Distance) or polygon (Area)
+        self.measure_shapes: list[dict] = []  # finished measurements that stay on the map: {kind, pts, label}
+        self.keep_measure = True              # Distance and Area keep every finished shape; Profile shows one line
         self._hints_shown: set[str] = set()    # measure instructions are shown the first time only
         self._zoom_start = None               # corner of the zoom box being dragged (screen position)
         self._zoom_end = None
@@ -139,6 +141,7 @@ class MapCanvas(QWidget):
         if mode not in ("draw", "measure") or mode != self.mode:
             self.draft.clear()
             self.measure_done = False
+            self.measure_shapes.clear()
         hints = {
             "draw": "Click to add vertices · Double-click to finish · Esc to cancel",
             "measure": "Click points along the line · Double-click to finish · Right-click removes the last point · Esc to cancel",
@@ -162,10 +165,13 @@ class MapCanvas(QWidget):
         self.modeChanged.emit(mode)
         self.update()
 
-    def start_measure(self, kind: str) -> None:
-        """Distance ("line") or Area ("polygon"): start a fresh measurement on the map."""
+    def start_measure(self, kind: str, keep: bool = True) -> None:
+        """Distance ("line") or Area ("polygon"): start a fresh measuring session on the map.
+        keep=True: every finished line or area stays on the map while the tool is active."""
         self.measure_kind = kind
+        self.keep_measure = keep
         self.draft.clear()
+        self.measure_shapes.clear()
         self.measure_done = False
         self.set_mode("measure")
         self.update()
@@ -183,7 +189,35 @@ class MapCanvas(QWidget):
         self.preview = kind
         self.update()
 
+    def _draw_measure_label(self, p: QPainter, spts, is_area: bool, text: str) -> None:
+        """A small tag with the result, at the middle of a line or the centre of an area."""
+        if not text or len(spts) < 2:
+            return
+        if is_area and len(spts) >= 3:
+            c = QPolygonF(spts).boundingRect().center()
+        else:
+            a, b = spts[len(spts) // 2 - 1], spts[len(spts) // 2]
+            c = QPointF((a.x() + b.x()) / 2, (a.y() + b.y()) / 2)
+        f = QFont(self.font())
+        f.setPointSizeF(9.5)
+        f.setBold(True)
+        p.setFont(f)
+        w = p.fontMetrics().horizontalAdvance(text) + 16
+        box = QRectF(c.x() - w / 2, c.y() - 28, w, 22)
+        p.setPen(QPen(QColor("#e07b00"), 1.2))
+        p.setBrush(QColor(255, 255, 255, 235))
+        p.drawRoundedRect(box, 6, 6)
+        p.setPen(QColor("#7a3f00"))
+        p.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+
+    def set_measure_label(self, text: str) -> None:
+        """Result text (for example "42.5 km") written on the shape that was just finished."""
+        if self.measure_done and self.measure_shapes:
+            self.measure_shapes[-1]["label"] = text
+            self.update()
+
     def cancel_draw(self) -> None:
+        self.measure_shapes.clear()
         if self.draft:
             self.draft.clear()
             self.update()
@@ -209,6 +243,8 @@ class MapCanvas(QWidget):
         area = self.measure_kind == "polygon"
         if len(self.draft) >= (3 if area else 2):
             self.measure_done = True
+            if self.keep_measure:                       # it stays on the map when the next one is started
+                self.measure_shapes.append({"kind": self.measure_kind, "pts": list(self.draft), "label": ""})
             self.update()
             self.measureChanged.emit(list(self.draft), True)
         else:
@@ -409,6 +445,31 @@ class MapCanvas(QWidget):
                 p.drawText(QPointF(c.x() - 24, c.y() + 4), f"Region {i + 1}")
             p.setOpacity(1)
 
+        # finished measurements (the one just finished is drawn below as the current line)
+        saved = self.measure_shapes[:-1] if self.measure_done else self.measure_shapes
+        for shape in saved:
+            spts = [self.to_screen(x, y) for x, y in shape["pts"]]
+            if len(spts) < 2:
+                continue
+            is_area = shape["kind"] == "polygon"
+            if is_area and len(spts) >= 3:
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(224, 123, 0, 55))
+                p.drawPolygon(QPolygonF(spts))
+            p.setPen(QPen(QColor("#e07b00"), 2))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            for a, b in zip(spts, spts[1:]):
+                p.drawLine(a, b)
+            if is_area and len(spts) >= 3:
+                p.drawLine(spts[-1], spts[0])
+            p.setBrush(QColor("#ffffff"))
+            for pt in spts:
+                p.drawEllipse(pt, 4, 4)
+            self._draw_measure_label(p, spts, is_area, shape["label"])
+        if self.measure_done and self.measure_shapes and self.draft:
+            self._draw_measure_label(p, [self.to_screen(x, y) for x, y in self.draft],
+                                     self.measure_kind == "polygon", self.measure_shapes[-1]["label"])
+
         # polygon being drawn
         if self.draft:
             pts = [self.to_screen(x, y) for x, y in self.draft]
@@ -531,6 +592,8 @@ class MapCanvas(QWidget):
         elif e.button() == Qt.MouseButton.RightButton and self.mode in ("draw", "measure") and self.draft:
             if self.measure_done:
                 self.measure_done = False
+                if self.measure_shapes:                 # the finished line is being edited again
+                    self.measure_shapes.pop()
             self.draft.pop()
             self.update()
             if self.mode == "measure":

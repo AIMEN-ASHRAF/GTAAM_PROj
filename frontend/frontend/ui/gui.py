@@ -1798,6 +1798,8 @@ class MainWindow(QMainWindow):
             self.show_toast(f"Area: {e}")
             return
         w.show_result(res, self._measure_done)
+        if self._measure_done:
+            self.map.canvas.set_measure_label(f"{res['area']:,.2f} {res['unit']}")
         self.set_status(f"Area \u00b7 {lyr.name} \u00b7 {res['area']:,.3f} {res['unit']}")
 
     def act_measure_profile(self) -> None:
@@ -1824,7 +1826,7 @@ class MainWindow(QMainWindow):
             w.move(self.map.mapToGlobal(QPoint(24, 70)))
         w.show()
         w.raise_()
-        self.map.canvas.start_measure("line")
+        self.map.canvas.start_measure("line", keep=False)
         self.map.canvas.setFocus()
 
     def _profile_update(self) -> None:
@@ -1880,6 +1882,8 @@ class MainWindow(QMainWindow):
             self.show_toast(f"Distance: {e}")
             return
         w.show_result(res, self._measure_done, True)
+        if self._measure_done:
+            self.map.canvas.set_measure_label(f"{res['total']:,.2f} {res['unit']}")
         self.set_status(f"Distance \u00b7 {lyr.name} \u00b7 {res['total']:,.3f} {res['unit']}")
 
     def _measure_closed(self) -> None:
