@@ -28,6 +28,8 @@ class MapCanvas(QWidget):
     viewChanged = pyqtSignal()
     regionsChanged = pyqtSignal()
     measureChanged = pyqtSignal(list, bool)   # points so far (cells), line finished?
+    measureShapeRemoved = pyqtSignal(int)     # a finished line was opened again: its id
+    measuresCleared = pyqtSignal()            # all the kept lines were dropped (a new one started with "keep" off)
     modeChanged = pyqtSignal(str)
     hintChanged = pyqtSignal(str)             
     statusMessage = pyqtSignal(str)
@@ -47,6 +49,7 @@ class MapCanvas(QWidget):
         self.measure_shapes: list[dict] = []  # finished measurements that stay on the map: {kind, pts, label}
         self.keep_measure = True              # every finished line or area stays on the map while the tool is active
         self.color_shapes = False             # Elevation Profile: each line gets its own colour
+        self._shape_counter = 0               # every kept shape gets the next number (1, 2, 3 ...)
         self._hints_shown: set[str] = set()    # measure instructions are shown the first time only
         self._zoom_start = None               # corner of the zoom box being dragged (screen position)
         self._zoom_end = None
@@ -177,6 +180,7 @@ class MapCanvas(QWidget):
         self.measure_kind = kind
         self.keep_measure = keep
         self.color_shapes = colored
+        self._shape_counter = 0
         self.draft.clear()
         self.measure_shapes.clear()
         self.measure_done = False
@@ -230,6 +234,37 @@ class MapCanvas(QWidget):
             self.measure_shapes[-1]["label"] = text
             self.update()
 
+    def set_shape_label(self, sid: int, text: str) -> None:
+        for shape in self.measure_shapes:
+            if shape.get("id") == sid:
+                shape["label"] = text
+                self.update()
+                return
+
+    def remove_measure_shape(self, sid: int) -> None:
+        """The user discarded one kept line or area (the x on its card)."""
+        for i, shape in enumerate(self.measure_shapes):
+            if shape.get("id") == sid:
+                was_current = self.measure_done and i == len(self.measure_shapes) - 1
+                del self.measure_shapes[i]
+                if was_current:                        # it is also the line shown as "just finished"
+                    self.draft.clear()
+                    self.measure_done = False
+                    self.update()
+                    self.measureChanged.emit([], False)
+                self.update()
+                return
+
+    def clear_measure_shapes(self) -> None:
+        """Discard every kept line or area."""
+        had_current = self.measure_done
+        self.measure_shapes.clear()
+        if had_current:
+            self.draft.clear()
+            self.measure_done = False
+            self.measureChanged.emit([], False)
+        self.update()
+
     def cancel_draw(self) -> None:
         self.measure_shapes.clear()
         if self.draft:
@@ -255,12 +290,15 @@ class MapCanvas(QWidget):
     def finish_measure(self) -> None:
         """Double-click / Enter: the line is finished and stays on the map; the tool stays active."""
         area = self.measure_kind == "polygon"
+        if self.measure_done:                           # already finished: a second double-click or Enter does nothing
+            return
         if len(self.draft) >= (3 if area else 2):
             color = self._draft_color()                 # before measure_done changes which line is "current"
             self.measure_done = True
             if self.keep_measure:                       # it stays on the map when the next one is started
-                self.measure_shapes.append({"kind": self.measure_kind, "pts": list(self.draft), "label": "",
-                                            "color": color})
+                self._shape_counter += 1
+                self.measure_shapes.append({"id": self._shape_counter, "kind": self.measure_kind,
+                                            "pts": list(self.draft), "label": "", "color": color})
             self.update()
             self.measureChanged.emit(list(self.draft), True)
         else:
@@ -612,7 +650,8 @@ class MapCanvas(QWidget):
             if self.measure_done:
                 self.measure_done = False
                 if self.measure_shapes:                 # the finished line is being edited again
-                    self.measure_shapes.pop()
+                    gone = self.measure_shapes.pop()
+                    self.measureShapeRemoved.emit(gone.get("id", 0))
             self.draft.pop()
             self.update()
             if self.mode == "measure":
@@ -696,6 +735,9 @@ class MapCanvas(QWidget):
             if self.mode == "measure" and self.measure_done:      # a new line starts
                 self.draft.clear()
                 self.measure_done = False
+                if not self.keep_measure and self.measure_shapes:  # "keep earlier results" is off: drop the old ones
+                    self.measure_shapes.clear()
+                    self.measuresCleared.emit()
             self.draft.append((cx, cy))
             self.update()
             if self.mode == "measure":

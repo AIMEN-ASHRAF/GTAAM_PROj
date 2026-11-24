@@ -672,6 +672,102 @@ def _card_title(text: str) -> QLabel:
     return t
 
 
+class MeasureHistory(QWidget):
+    """Under a Distance or Area result: the choice to keep earlier results on the map, and a small card for each one
+    (with its own x to discard it)."""
+    keepChanged = pyqtSignal(bool)
+    removeRequested = pyqtSignal(int)        # the id of the line or area to discard
+    clearRequested = pyqtSignal()
+
+    def __init__(self, what: str) -> None:
+        super().__init__()
+        self.cards: dict[int, QFrame] = {}
+        self.unit_key: dict[int, str] = {}   # id -> the units its numbers were measured in
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 6, 0, 0)
+        lay.setSpacing(5)
+        row = QHBoxLayout()
+        self.keep = QCheckBox(f"Keep earlier {what} on the map")
+        self.keep.setObjectName("measureName")
+        self.keep.setChecked(True)
+        self.keep.toggled.connect(self.keepChanged.emit)
+        self.clear_btn = QPushButton("Clear all")
+        self.clear_btn.setObjectName("histClear")
+        self.clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clear_btn.clicked.connect(lambda _c=False: self.clearRequested.emit())
+        row.addWidget(self.keep)
+        row.addStretch(1)
+        row.addWidget(self.clear_btn)
+        lay.addLayout(row)
+        self.scroll = QScrollArea()
+        self.scroll.setObjectName("histScroll")
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setMaximumHeight(200)
+        inner = QWidget()
+        self.list = QVBoxLayout(inner)
+        self.list.setContentsMargins(0, 0, 0, 0)
+        self.list.setSpacing(5)
+        self.list.addStretch(1)
+        self.scroll.setWidget(inner)
+        lay.addWidget(self.scroll)
+        self._sync()
+
+    def set_entry(self, sid: int, title: str, sub: str, color: str) -> None:
+        card = self.cards.get(sid)
+        if card is None:
+            card = QFrame()
+            card.setObjectName("histCard")
+            h = QHBoxLayout(card)
+            h.setContentsMargins(8, 6, 6, 6)
+            h.setSpacing(8)
+            num = QLabel(str(sid))
+            num.setFixedSize(20, 20)
+            num.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            num.setStyleSheet(f"background: {color}; color: #ffffff; border-radius: 10px; font-size: 11px; font-weight: 700;")
+            col = QVBoxLayout()
+            col.setSpacing(0)
+            card._title = QLabel("")
+            card._title.setObjectName("measureValue")
+            card._sub = QLabel("")
+            card._sub.setObjectName("measureCaption")
+            col.addWidget(card._title)
+            col.addWidget(card._sub)
+            x = QToolButton()
+            x.setObjectName("histX")
+            x.setText("\u2715")
+            x.setToolTip("Discard this one")
+            x.setCursor(Qt.CursorShape.PointingHandCursor)
+            x.clicked.connect(lambda _c=False, i=sid: self.removeRequested.emit(i))
+            h.addWidget(num)
+            h.addLayout(col, 1)
+            h.addWidget(x)
+            self.list.insertWidget(self.list.count() - 1, card)
+            self.cards[sid] = card
+        card._title.setText(title)
+        card._sub.setText(sub)
+        card._sub.setVisible(bool(sub))
+        self._sync()
+
+    def remove(self, sid: int) -> None:
+        card = self.cards.pop(sid, None)
+        self.unit_key.pop(sid, None)
+        if card is not None:
+            card.setParent(None)
+            card.deleteLater()
+        self._sync()
+
+    def clear(self) -> None:
+        for sid in list(self.cards):
+            self.remove(sid)
+        self.unit_key.clear()
+
+    def _sync(self) -> None:
+        has = bool(self.cards)
+        self.scroll.setVisible(has)
+        self.clear_btn.setVisible(has)
+
+
 class MeasureWindow(QDialog):
     """A small floating Measure box, like ArcMap's: it updates as points are clicked and has a
     units menu. Segment is the last straight piece, Length is the whole line."""
@@ -696,6 +792,12 @@ class MeasureWindow(QDialog):
             QLabel#measureCaption { color: #8a949c; font-size: 11px; }
             QLabel#measureNote { color: #7a6a3a; font-size: 11px; }
             QFrame#measureRule { background: #edf0f3; max-height: 1px; min-height: 1px; border: none; }
+            QFrame#histCard { background: #f6f8fa; border: 1px solid #e1e5e9; border-radius: 8px; }
+            QToolButton#histX { border: none; color: #8a949c; font-size: 13px; padding: 2px 5px; }
+            QToolButton#histX:hover { color: #c0392b; }
+            QPushButton#histClear { border: none; color: #1f6f9a; font-size: 12px; padding: 2px 4px; background: transparent; }
+            QPushButton#histClear:hover { text-decoration: underline; }
+            QScrollArea#histScroll, QScrollArea#histScroll > QWidget > QWidget { background: transparent; border: none; }
             QCheckBox#measureName { color: #5b6670; font-size: 12px; spacing: 6px; }
             QComboBox { background: #f6f8fa; color: #1b2530; border: 1px solid #cfd6dc; border-radius: 8px;
                         padding: 5px 30px 5px 10px; min-height: 20px; font-size: 12px; }
@@ -782,6 +884,8 @@ class MeasureWindow(QDialog):
         self.note.setWordWrap(True)
         rl.addWidget(self.note)
         body.addWidget(self.result_box)
+        self.history = MeasureHistory("lines")
+        body.addWidget(self.history)
         outer.addWidget(card)
         self.show_waiting()
 
@@ -1335,6 +1439,8 @@ class AreaWindow(QDialog):
             self.rows[key] = b
             self.names[key] = a
         body.addWidget(self.result_box)
+        self.history = MeasureHistory("areas")
+        body.addWidget(self.history)
         outer.addWidget(card)
         self.show_waiting()
 
@@ -1541,6 +1647,8 @@ class MainWindow(QMainWindow):
         m.discardPreview.connect(self.act_discard_preview)
         m.canvas.regionsChanged.connect(self._regions_changed)
         m.canvas.measureChanged.connect(self._measure_changed)
+        m.canvas.measureShapeRemoved.connect(self._measure_shape_removed)
+        m.canvas.measuresCleared.connect(self._measure_cards_cleared)
         m.canvasAdded.connect(self.ws.add_canvas)
         m.canvasSwitched.connect(self._canvas_switched)
         m.canvasClosed.connect(self.ws.remove_canvas)
@@ -1819,6 +1927,7 @@ class MainWindow(QMainWindow):
             self._measure_window = MeasureWindow(self)
             self._measure_window.unitsChanged.connect(lambda _u: self._measure_update())
             self._measure_window.closed.connect(self._measure_closed)
+            self._wire_history(self._measure_window)
         for other in (getattr(self, "_area_window", None), getattr(self, "_profile_window", None)):
             if other is not None:
                 other.hide()
@@ -1828,12 +1937,14 @@ class MainWindow(QMainWindow):
         self._measure_done = False
         w = self._measure_window
         w.set_layer(source.name, "4326" in (source.crs or ""))
+        w.history.clear()
         w.show_waiting()
         if not w.isVisible():
             w.move(self.map.mapToGlobal(QPoint(24, 70)))
         w.show()
         w.raise_()
         self.map.canvas.start_measure("line")
+        self.map.canvas.keep_measure = w.history.keep.isChecked()
         self.map.canvas.setFocus()
 
     def act_measure_area(self) -> None:
@@ -1846,6 +1957,7 @@ class MainWindow(QMainWindow):
             self._area_window = AreaWindow(self)
             self._area_window.unitsChanged.connect(lambda _u: self._measure_update())
             self._area_window.closed.connect(self._measure_closed)
+            self._wire_history(self._area_window)
         for other in (getattr(self, "_measure_window", None), getattr(self, "_profile_window", None)):
             if other is not None:
                 other.hide()
@@ -1855,12 +1967,14 @@ class MainWindow(QMainWindow):
         self._measure_done = False
         w = self._area_window
         w.set_layer(source.name, "4326" in (source.crs or ""))
+        w.history.clear()
         w.show_waiting()
         if not w.isVisible():
             w.move(self.map.mapToGlobal(QPoint(24, 70)))
         w.show()
         w.raise_()
         self.map.canvas.start_measure("polygon")
+        self.map.canvas.keep_measure = w.history.keep.isChecked()
         self.map.canvas.setFocus()
 
     def _area_update(self) -> None:
@@ -1869,6 +1983,7 @@ class MainWindow(QMainWindow):
         points = getattr(self, "_measure_points", [])
         if w is None or lyr is None:
             return
+        self._measure_refresh_cards("polygon", lyr, w)
         if len(points) < 3:
             w.show_waiting(("Click the first corner on the map.", "Click the second corner.",
                             "Click the third corner to see the area.")[len(points)])
@@ -1885,7 +2000,7 @@ class MainWindow(QMainWindow):
             return
         w.show_result(res, self._measure_done)
         if self._measure_done:
-            self.map.canvas.set_measure_label(f"{res['area']:,.2f} {res['unit']}")
+            self._measure_record("polygon", res, w)
         self.set_status(f"Area \u00b7 {lyr.name} \u00b7 {res['area']:,.3f} {res['unit']}")
 
     def act_measure_profile(self) -> None:
@@ -1956,6 +2071,99 @@ class MainWindow(QMainWindow):
             canvas.set_measure_label(f"Profile {idx + 1} \u00b7 {res['total_distance']:,.2f} {res['distance_units']}")
         self.set_status(f"Elevation profile \u00b7 {lyr.name} \u00b7 {res['total_distance']:,.3f} {res['distance_units']}")
 
+    # ---- Distance and Area: the cards of the earlier results ----
+    def _wire_history(self, w) -> None:
+        w.history.keepChanged.connect(lambda keep: setattr(self.map.canvas, "keep_measure", keep))
+        w.history.removeRequested.connect(self._measure_card_removed)
+        w.history.clearRequested.connect(self._measure_clear_all)
+
+    def _measure_window_now(self):
+        kind = getattr(self, "_measure_kind", "line")
+        return {"line": getattr(self, "_measure_window", None), "polygon": getattr(self, "_area_window", None)}.get(kind)
+
+    @staticmethod
+    def _measure_entry_text(kind: str, res: dict) -> tuple[str, str]:
+        """Headline and small line for a result card."""
+        if kind == "polygon":
+            d = AreaWindow.DECIMALS.get(res["unit"], 2)
+            pd = 3 if res["perimeter_unit"] == "km" else 1
+            return f"{res['area']:,.{d}f} {res['unit']}", f"Perimeter {res['perimeter']:,.{pd}f} {res['perimeter_unit']}"
+        unit = res["unit"]
+        d = 3 if unit in ("km", "mi") else 2
+        n = len(res.get("segments", []))
+        el = res.get("elevation")
+        sub = f"{n} segment{'s' if n != 1 else ''}"
+        if el:
+            eu = res.get("elevation_unit", unit)
+            sub += f" \u00b7 height change {el['difference']:+,.{3 if eu in ('km', 'mi') else 1}f} {eu}"
+        return f"{res['total']:,.{d}f} {unit}", sub
+
+    def _measure_fetch(self, kind: str, lyr, pts: list, units: str) -> dict:
+        display_height, display_width = lyr.rgba.shape[:2]
+        pixels = [[cy * lyr.source_height / display_height, cx * lyr.source_width / display_width] for cx, cy in pts]
+        if kind == "polygon":
+            return self.api_post("/analysis/measure/area", {"layer_id": lyr.id, "pixels": pixels, "units": units,
+                                                            "include_surface": False})
+        return self.api_post("/analysis/measure/distance", {"layer_id": lyr.id, "pixels": pixels, "units": units,
+                                                            "include_elevation": True})
+
+    def _measure_record(self, kind: str, res: dict, w) -> None:
+        """The line or area was just finished: add its card and write its result on the map."""
+        canvas = self.map.canvas
+        if not canvas.keep_measure or not canvas.measure_shapes:
+            return
+        shape = canvas.measure_shapes[-1]
+        title, sub = self._measure_entry_text(kind, res)
+        w.history.set_entry(shape["id"], title, sub, shape.get("color", "#e07b00"))
+        w.history.unit_key[shape["id"]] = w.units.currentData()
+        canvas.set_shape_label(shape["id"], f"{shape['id']} \u00b7 {title}")
+        w.adjustSize()
+
+    def _measure_refresh_cards(self, kind: str, lyr, w) -> None:
+        """The units were changed: the earlier results are measured again in the new units."""
+        canvas = self.map.canvas
+        units = w.units.currentData()
+        for i, shape in enumerate(canvas.measure_shapes):
+            current = self._measure_done and i == len(canvas.measure_shapes) - 1
+            if current or w.history.unit_key.get(shape["id"]) == units:
+                continue
+            try:
+                res = self._measure_fetch(kind, lyr, shape["pts"], units)
+            except Exception as e:
+                self.show_toast(f"Measure: {e}")
+                return
+            title, sub = self._measure_entry_text(kind, res)
+            w.history.set_entry(shape["id"], title, sub, shape.get("color", "#e07b00"))
+            w.history.unit_key[shape["id"]] = units
+            canvas.set_shape_label(shape["id"], f"{shape['id']} \u00b7 {title}")
+
+    def _measure_card_removed(self, sid: int) -> None:
+        w = self._measure_window_now()
+        self.map.canvas.remove_measure_shape(sid)
+        if w is not None:
+            w.history.remove(sid)
+            w.adjustSize()
+
+    def _measure_clear_all(self) -> None:
+        w = self._measure_window_now()
+        self.map.canvas.clear_measure_shapes()
+        if w is not None:
+            w.history.clear()
+            w.adjustSize()
+
+    def _measure_shape_removed(self, sid: int) -> None:
+        """A finished line was opened again (right-click): its card goes until it is finished again."""
+        w = self._measure_window_now()
+        if w is not None:
+            w.history.remove(sid)
+            w.adjustSize()
+
+    def _measure_cards_cleared(self) -> None:
+        w = self._measure_window_now()
+        if w is not None:
+            w.history.clear()
+            w.adjustSize()
+
     def _measure_changed(self, points: list, finished: bool) -> None:
         """A point was added or removed (or the line finished): measure again and update the box."""
         self._measure_points, self._measure_done = points, finished
@@ -1974,6 +2182,7 @@ class MainWindow(QMainWindow):
         points = getattr(self, "_measure_points", [])
         if w is None or lyr is None:
             return
+        self._measure_refresh_cards("line", lyr, w)
         if len(points) < 2:
             w.show_waiting("Click the second point." if points else "Click the first point on the map.")
             return
@@ -1989,7 +2198,7 @@ class MainWindow(QMainWindow):
             return
         w.show_result(res, self._measure_done, True)
         if self._measure_done:
-            self.map.canvas.set_measure_label(f"{res['total']:,.2f} {res['unit']}")
+            self._measure_record("line", res, w)
         self.set_status(f"Distance \u00b7 {lyr.name} \u00b7 {res['total']:,.3f} {res['unit']}")
 
     def _measure_closed(self) -> None:
