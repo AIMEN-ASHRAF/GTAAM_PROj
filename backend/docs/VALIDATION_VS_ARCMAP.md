@@ -128,7 +128,36 @@ same tile have similar distributions (std 0.27 vs 0.34); they are not identical 
 curvature depends on cell size. Honest wording: "on a degree DEM the app converts to metres before computing curvature;
 ArcMap cannot, so it was verified against a known surface, not against ArcMap output."
 
+## Degrees to UTM: Project Raster (24 Nov 2026)
+
+Used by Project Settings > Analyze in UTM. Source: `ALPSMLC30_N065E060_DSM.tif` (AW3D30, 65N, 3600 x 1800, 1" x 2"
+cells). ArcMap's Project Raster to WGS 84 / UTM 41N was compared with the app's reprojection (same rasterio warp
+used by Analyze in UTM) **on ArcMap's own output grid**, cell by cell.
+
+| Check | ArcMap vs app |
+|---|---|
+| Zone chosen automatically | 41N (EPSG:32641), identical |
+| Valid cells, bilinear | ArcMap 5,827,626; app 5,827,694 (68 extra edge cells, none missing) |
+| **Bilinear** height difference | mean 0.30 m, 99th percentile 1.18 m, max 13.3 m; 98.2% of cells within 1 m |
+| Valid cells, nearest | ArcMap 5,732,291; app 5,732,361 (70 extra, none missing) |
+| **Nearest** cell-by-cell | only 33% of cells identical, 54% within 1 m, mean 3.76 m, 99th percentile 35 m |
+| Nearest overall statistics | mean 502.4 m (ArcMap) vs 504.7 m (app); std 325.2 vs 327.3 |
+| Nearest texture | mean height jump between neighbouring cells 3.37 m (ArcMap) vs 2.75 m (app) |
+
+What this means in plain words:
+- **Zone selection and bilinear (the app's default) match ArcMap.** The 0.3 m mean difference is interpolation detail.
+- **Nearest does not match cell by cell.** The overall statistics agree within about 0.5%, but ArcMap's output is rougher
+  than ours, so it picks source cells in a different pattern. The cause is not known yet. It is not a data problem: the
+  same result came from `dsm_n65.tif` and from the original source file. Nearest is therefore **not claimed as
+  validated**. Bilinear is the default and is what Analyze in UTM uses unless the user changes it.
+- The app's default cell size (29.987 m) differs slightly from ArcMap's (30 m), so on their own grids the two outputs
+  are offset by a fraction of a cell. The comparison above avoids this by using ArcMap's grid.
+
+Slope in UTM (AW3D30 N033E073, bilinear) is 12.71 degrees mean against 13.09 planar / 12.99 geodesic on the degree DEM:
+about 2-3% lower, because bilinear resampling smooths the surface.
+
 ## Not yet validated
 Surface (3D) area (hidden in the app behind a flag). Hillshade and Aspect (planar) on Copernicus tiles above 50 N.
 Layer Statistics, Histogram, NoData Check and Outlier Check are done (see above). Roughness, TPI and Ruggedness have no single ArcMap tool and were
 compared with Raster Calculator; their numbers still need to be added to this file.
+- Degree-to-UTM **nearest** resampling: cell-by-cell pattern differs from ArcMap's (see above); cause unknown.
