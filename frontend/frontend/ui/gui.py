@@ -1278,6 +1278,14 @@ class ProfileWindow(QDialog):
         self.true_scale.toggled.connect(lambda _c: self._redraw())
         top.addWidget(units_label)
         top.addWidget(self.units)
+        graph_label = QLabel("Graph")
+        graph_label.setObjectName("measureName")
+        self.graph_mode = QComboBox()                      # one combined graph, or one graph per profile
+        self.graph_mode.addItem("All together", "together")
+        self.graph_mode.addItem("Separate", "separate")
+        self.graph_mode.currentIndexChanged.connect(lambda _i: self._redraw())
+        top.addWidget(graph_label)
+        top.addWidget(self.graph_mode)
         top.addStretch(1)
         if SHOW_TRUE_SCALE:
             top.addWidget(self.true_scale)
@@ -1302,6 +1310,18 @@ class ProfileWindow(QDialog):
         self.chart = ProfileChart()
         self.chart.profileClicked.connect(self.select)
         body.addWidget(self.chart)
+        self.sep_box = QWidget()                           # separate mode: one small graph per profile
+        self.sep_layout = QVBoxLayout(self.sep_box)
+        self.sep_layout.setContentsMargins(0, 0, 0, 0)
+        self.sep_layout.setSpacing(8)
+        self.sep_scroll = QScrollArea()
+        self.sep_scroll.setWidgetResizable(True)
+        self.sep_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.sep_scroll.setMinimumHeight(300)
+        self.sep_scroll.setMaximumHeight(460)
+        self.sep_scroll.setWidget(self.sep_box)
+        self.sep_scroll.hide()
+        body.addWidget(self.sep_scroll)
         self.pick_hint = QLabel("Click a profile name in the graph (or Ctrl+click its line on the map) to see its numbers.")
         self.pick_hint.setObjectName("measureCaption")
         self.pick_hint.setWordWrap(True)
@@ -1360,8 +1380,39 @@ class ProfileWindow(QDialog):
     def _redraw(self) -> None:
         series = [{"res": r, "color": PROFILE_COLORS[i % len(PROFILE_COLORS)], "name": f"Profile {i + 1}", "idx": i}
                   for i, r in sorted(self.profiles.items())]
+        separate = self.graph_mode.currentData() == "separate" and len(series) > 1
         self.chart.set_series(series, self.true_scale.isChecked(), self.selected)
-        self.pick_hint.setVisible(len(self.profiles) > 1)
+        self.chart.setVisible(not separate)
+        self.sep_scroll.setVisible(separate)
+        self.pick_hint.setVisible(len(self.profiles) > 1 and not separate)
+        if separate:
+            self._fill_separate(series)
+        self.adjustSize()
+
+    def _fill_separate(self, series: list[dict]) -> None:
+        """One graph per profile, each with its own height scale and its own numbers."""
+        while self.sep_layout.count():
+            item = self.sep_layout.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        for s in series:
+            res, idx = s["res"], s["idx"]
+            u = res.get("distance_units", "m")
+
+            def m(v):
+                return "\u2013" if v is None else f"{v:,.1f} m"
+            head = QLabel(f"<span style='color:{s['color']}'>\u25cf</span> <b>{s['name']}</b> \u00b7 "
+                          f"{res['total_distance']:,.3f} {u} \u00b7 lowest {m(res.get('min'))} \u00b7 "
+                          f"highest {m(res.get('max'))} \u00b7 climb {m(res.get('gain'))} \u00b7 "
+                          f"descent {m(res.get('loss'))}")
+            head.setObjectName("measureName")
+            head.setWordWrap(True)
+            chart = ProfileChart()
+            chart.setMinimumSize(470, 190)
+            chart.set_series([s], self.true_scale.isChecked(), None)
+            self.sep_layout.addWidget(head)
+            self.sep_layout.addWidget(chart)
+        self.sep_layout.addStretch(1)
 
     def _show_latest(self) -> None:
         """The numbers under the graph belong to the newest line; the graph shows all of them."""
