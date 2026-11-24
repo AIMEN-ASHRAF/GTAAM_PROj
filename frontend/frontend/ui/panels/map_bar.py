@@ -29,6 +29,7 @@ class MapCanvas(QWidget):
     regionsChanged = pyqtSignal()
     measureChanged = pyqtSignal(list, bool)   # points so far (cells), line finished?
     measureShapeRemoved = pyqtSignal(int)     # a finished line was opened again: its id
+    shapeClicked = pyqtSignal(int)            # Ctrl+click on a kept profile line: its position (0, 1, 2 ...)
     measuresCleared = pyqtSignal()            # all the kept lines were dropped (a new one started with "keep" off)
     modeChanged = pyqtSignal(str)
     hintChanged = pyqtSignal(str)             
@@ -50,6 +51,7 @@ class MapCanvas(QWidget):
         self.keep_measure = True              # every finished line or area stays on the map while the tool is active
         self.color_shapes = False             # Elevation Profile: each line gets its own colour
         self._shape_counter = 0               # every kept shape gets the next number (1, 2, 3 ...)
+        self.selected_shape_pos: int | None = None   # the profile line whose numbers are shown (drawn thicker)
         self._hints_shown: set[str] = set()    # measure instructions are shown the first time only
         self._zoom_start = None               # corner of the zoom box being dragged (screen position)
         self._zoom_end = None
@@ -161,6 +163,9 @@ class MapCanvas(QWidget):
         if self.measure_kind == "polygon":
             hints["measure"] = ("Click the corners of the area · Double-click to finish · "
                                "Right-click removes the last point · Esc to cancel")
+        elif self.color_shapes:
+            hints["measure"] = ("Click points along the line · Double-click to finish · Right-click removes the last point · "
+                               "Ctrl+click a line to see its numbers · Esc to cancel")
         text = hints.get(mode, "")
         if mode == "measure":           # the measure instructions only appear the first time each tool is used
             key = f"measure-{self.measure_kind}"
@@ -181,6 +186,7 @@ class MapCanvas(QWidget):
         self.keep_measure = keep
         self.color_shapes = colored
         self._shape_counter = 0
+        self.selected_shape_pos = None
         self.draft.clear()
         self.measure_shapes.clear()
         self.measure_done = False
@@ -199,6 +205,20 @@ class MapCanvas(QWidget):
     def set_preview(self, kind: str | None) -> None:
         self.preview = kind
         self.update()
+
+    def _hit_shape(self, pos: QPointF, reach: float = 9.0) -> int | None:
+        """The kept line nearest to a screen position (within a few pixels), or None."""
+        best, best_d = None, reach
+        for i, shape in enumerate(self.measure_shapes):
+            pts = [self.to_screen(x, y) for x, y in shape["pts"]]
+            for a, b in zip(pts, pts[1:]):
+                dx, dy = b.x() - a.x(), b.y() - a.y()
+                L2 = dx * dx + dy * dy
+                t = 0.0 if L2 == 0 else max(0.0, min(1.0, ((pos.x() - a.x()) * dx + (pos.y() - a.y()) * dy) / L2))
+                d = ((pos.x() - (a.x() + t * dx)) ** 2 + (pos.y() - (a.y() + t * dy)) ** 2) ** 0.5
+                if d < best_d:
+                    best, best_d = i, d
+        return best
 
     def _draft_color(self) -> str:
         """Colour of the line being drawn (or just finished): its own colour for Elevation Profile."""
@@ -501,7 +521,7 @@ class MapCanvas(QWidget):
 
         # finished measurements (the one just finished is drawn below as the current line)
         saved = self.measure_shapes[:-1] if self.measure_done else self.measure_shapes
-        for shape in saved:
+        for pos, shape in enumerate(saved):
             spts = [self.to_screen(x, y) for x, y in shape["pts"]]
             if len(spts) < 2:
                 continue
@@ -511,8 +531,13 @@ class MapCanvas(QWidget):
                 p.setBrush(QColor(224, 123, 0, 55))
                 p.drawPolygon(QPolygonF(spts))
             sc = shape.get("color", MEASURE_COLOR)
-            p.setPen(QPen(QColor(sc), 2))
+            chosen = pos == self.selected_shape_pos
             p.setBrush(Qt.BrushStyle.NoBrush)
+            if chosen:                                   # the profile whose numbers are shown: a white halo and a thicker line
+                p.setPen(QPen(QColor(255, 255, 255, 220), 6.5))
+                for a, b in zip(spts, spts[1:]):
+                    p.drawLine(a, b)
+            p.setPen(QPen(QColor(sc), 3.6 if chosen else 2))
             for a, b in zip(spts, spts[1:]):
                 p.drawLine(a, b)
             if is_area and len(spts) >= 3:
@@ -535,8 +560,14 @@ class MapCanvas(QWidget):
                 p.setPen(Qt.PenStyle.NoPen)
                 p.setBrush(QColor(dcol.red(), dcol.green(), dcol.blue(), 55))
                 p.drawPolygon(QPolygonF(pts))
-            p.setPen(QPen(dcol, 2))
+            dpos = len(self.measure_shapes) - 1 if self.measure_done else len(self.measure_shapes)
+            chosen = self.color_shapes and dpos == self.selected_shape_pos
             p.setBrush(Qt.BrushStyle.NoBrush)
+            if chosen:
+                p.setPen(QPen(QColor(255, 255, 255, 220), 6.5))
+                for a, b in zip(pts, pts[1:]):
+                    p.drawLine(a, b)
+            p.setPen(QPen(dcol, 3.6 if chosen else 2))
             for a, b in zip(pts, pts[1:]):
                 p.drawLine(a, b)
             if area_mode and len(pts) >= 3:
@@ -731,6 +762,11 @@ class MapCanvas(QWidget):
             self._dbl = False
             return
         cx, cy = self.to_cell(e.position().x(), e.position().y())
+        if self.mode == "measure" and self.color_shapes and (e.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            hit = self._hit_shape(e.position())               # Ctrl+click on a kept profile line: show its numbers
+            if hit is not None:
+                self.shapeClicked.emit(hit)
+                return
         if self.mode in ("draw", "measure"):
             if self.mode == "measure" and self.measure_done:      # a new line starts
                 self.draft.clear()

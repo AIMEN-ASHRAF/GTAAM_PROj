@@ -949,16 +949,21 @@ class ProfileChart(QWidget):
     """Draws distance (across) against height (up) for the profile lines, one colour per line (the same colour as
     the line on the map). Move the mouse over it to read the values of every line at that distance."""
 
+    profileClicked = pyqtSignal(int)          # a name in the legend was clicked: the profile's number (0, 1, 2 ...)
+
     def __init__(self) -> None:
         super().__init__()
         self.setMinimumSize(470, 250)
         self.setMouseTracking(True)
-        self.series: list[dict] = []          # {"res": profile result, "color": "#hex", "name": "Profile 1"}
+        self.selected: int | None = None      # the profile whose numbers are shown under the graph
+        self._legend_rects: list[tuple[QRectF, int]] = []
+        self.series: list[dict] = []          # {"res": profile result, "color": "#hex", "name": "Profile 1", "idx": 0}
         self.res: dict | None = None          # the newest profile (used for the true-scale box)
         self.true_scale = False
         self._hover: float | None = None      # distance along the axis under the mouse
 
-    def set_series(self, series: list[dict], true_scale: bool) -> None:
+    def set_series(self, series: list[dict], true_scale: bool, selected: int | None = None) -> None:
+        self.selected = selected
         self.series = [s for s in series if s.get("res")]
         self.res = self.series[-1]["res"] if self.series else None
         self.true_scale, self._hover = true_scale, None
@@ -1007,7 +1012,16 @@ class ProfileChart(QWidget):
         y = None if z is None else plot.bottom() - (z - lo) / (hi - lo) * plot.height()
         return x, y
 
+    def mousePressEvent(self, e) -> None:
+        for rect, idx in self._legend_rects:
+            if rect.contains(e.position()):
+                self.profileClicked.emit(idx)
+                return
+        super().mousePressEvent(e)
+
     def mouseMoveEvent(self, e) -> None:
+        over = any(r.contains(e.position()) for r, _i in self._legend_rects)
+        self.setCursor(Qt.CursorShape.PointingHandCursor if over else Qt.CursorShape.ArrowCursor)
         if not self.series:
             return
         plot = self._plot()
@@ -1041,6 +1055,7 @@ class ProfileChart(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), QColor("#ffffff"))
+        self._legend_rects = []
         plot = self._plot()
         if not self.series or not self._has_data():
             p.setPen(QPen(QColor("#dde2e7"), 1))
@@ -1117,7 +1132,9 @@ class ProfileChart(QWidget):
                 p.setBrush(QColor(col.red(), col.green(), col.blue(), 26 if multi else 46))
                 p.drawPolygon(poly)
                 p.setBrush(Qt.BrushStyle.NoBrush)
-                p.setPen(QPen(col, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+                chosen = multi and ser.get("idx") == self.selected
+                p.setPen(QPen(col, 3.0 if chosen else (1.5 if multi else 1.8), Qt.PenStyle.SolidLine,
+                              Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
                 p.drawPolyline(QPolygonF(r))
 
         # the two ends of each line: A and B for one profile, a coloured dot at each end for several
@@ -1153,12 +1170,24 @@ class ProfileChart(QWidget):
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(255, 255, 255, 215))
             p.drawRoundedRect(box, 4, 4)
+            bold = QFont(small)
+            bold.setBold(True)
             for k, ser in enumerate(self.series):
                 y = ly + 15 * k + 7
-                p.setPen(QPen(QColor(ser["color"]), 3))
+                chosen = ser.get("idx") == self.selected
+                row = QRectF(lx - 4, y - 7.5, w, 15)
+                self._legend_rects.append((row, ser.get("idx", k)))
+                if chosen:                                  # the profile whose numbers are shown below
+                    c = QColor(ser["color"])
+                    p.setPen(Qt.PenStyle.NoPen)
+                    p.setBrush(QColor(c.red(), c.green(), c.blue(), 40))
+                    p.drawRoundedRect(row, 3, 3)
+                p.setPen(QPen(QColor(ser["color"]), 4 if chosen else 3))
                 p.drawLine(QPointF(lx, y), QPointF(lx + 14, y))
                 p.setPen(QColor("#1b2530"))
+                p.setFont(bold if chosen else small)
                 p.drawText(QRectF(lx + 20, y - 7, w, 14), Qt.AlignmentFlag.AlignVCenter, ser["name"])
+            p.setFont(small)
 
         if self._hover is not None:
             hx = plot.left() + self._hover / total * plot.width()
@@ -1205,6 +1234,7 @@ class ProfileWindow(QDialog):
     """Floating Elevation Profile box: the height along the clicked line, with min, max, climb and slope."""
     unitsChanged = pyqtSignal(str)
     scaleChanged = pyqtSignal()
+    selectionChanged = pyqtSignal(int)      # the profile whose numbers are shown (0, 1, 2 ...)
     closed = pyqtSignal()
 
     def __init__(self, parent: QWidget) -> None:
@@ -1217,6 +1247,7 @@ class ProfileWindow(QDialog):
         self.res: dict | None = None
         self.profiles: dict[int, dict] = {}      # line number (0, 1, ...) -> its profile result; all are drawn together
         self.unit_key: dict[int, str] = {}       # line number -> the distance units its result was measured in
+        self.selected: int | None = None         # the profile whose numbers are shown under the graph
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 10, 10)
         card = QFrame()
@@ -1261,7 +1292,12 @@ class ProfileWindow(QDialog):
         body.addWidget(self.hero)
 
         self.chart = ProfileChart()
+        self.chart.profileClicked.connect(self.select)
         body.addWidget(self.chart)
+        self.pick_hint = QLabel("Click a profile name in the graph (or Ctrl+click its line on the map) to see its numbers.")
+        self.pick_hint.setObjectName("measureCaption")
+        self.pick_hint.setWordWrap(True)
+        body.addWidget(self.pick_hint)
 
         self.result_box = QWidget()
         grid = QGridLayout(self.result_box)
@@ -1295,6 +1331,7 @@ class ProfileWindow(QDialog):
         """A new Elevation Profile session: forget every earlier line."""
         self.profiles.clear()
         self.unit_key.clear()
+        self.selected = None
 
     def show_waiting(self, text: str = "Click the first point of the line on the map.", idx: int | None = None) -> None:
         """idx = the line being drawn that has no result yet; the other lines stay on the graph."""
@@ -1313,19 +1350,33 @@ class ProfileWindow(QDialog):
         self.adjustSize()
 
     def _redraw(self) -> None:
-        series = [{"res": r, "color": PROFILE_COLORS[i % len(PROFILE_COLORS)], "name": f"Profile {i + 1}"}
+        series = [{"res": r, "color": PROFILE_COLORS[i % len(PROFILE_COLORS)], "name": f"Profile {i + 1}", "idx": i}
                   for i, r in sorted(self.profiles.items())]
-        self.chart.set_series(series, self.true_scale.isChecked())
+        self.chart.set_series(series, self.true_scale.isChecked(), self.selected)
+        self.pick_hint.setVisible(len(self.profiles) > 1)
 
     def _show_latest(self) -> None:
         """The numbers under the graph belong to the newest line; the graph shows all of them."""
-        idx = max(self.profiles)
-        self.show_result(self.profiles[idx], True, idx)
+        self._set_selected(max(self.profiles))
 
     def show_result(self, res: dict, finished: bool, idx: int = 0) -> None:
+        """A profile was measured: its numbers are shown (click another name in the graph to see that one)."""
         self.profiles[idx] = res
-        self.res = res
+        self._set_selected(idx)
+
+    def select(self, idx: int) -> None:
+        if idx in self.profiles:
+            self._set_selected(idx)
+
+    def _set_selected(self, idx: int) -> None:
+        self.selected = idx
         self._redraw()
+        self._fill_stats(idx)
+        self.selectionChanged.emit(idx)
+
+    def _fill_stats(self, idx: int) -> None:
+        res = self.profiles[idx]
+        self.res = res
         u = res.get("distance_units", "m")
         n = len(self.profiles)
         dot = f"<span style='color:{PROFILE_COLORS[idx % len(PROFILE_COLORS)]}'>\u25cf</span> " if n > 1 else ""
@@ -1649,6 +1700,7 @@ class MainWindow(QMainWindow):
         m.canvas.measureChanged.connect(self._measure_changed)
         m.canvas.measureShapeRemoved.connect(self._measure_shape_removed)
         m.canvas.measuresCleared.connect(self._measure_cards_cleared)
+        m.canvas.shapeClicked.connect(self._profile_shape_clicked)
         m.canvasAdded.connect(self.ws.add_canvas)
         m.canvasSwitched.connect(self._canvas_switched)
         m.canvasClosed.connect(self.ws.remove_canvas)
@@ -2013,6 +2065,7 @@ class MainWindow(QMainWindow):
             self._profile_window = ProfileWindow(self)
             self._profile_window.unitsChanged.connect(lambda _u: self._measure_update())
             self._profile_window.closed.connect(self._measure_closed)
+            self._profile_window.selectionChanged.connect(self._profile_selected)
         for other in (getattr(self, "_measure_window", None), getattr(self, "_area_window", None)):
             if other is not None:
                 other.hide()
@@ -2157,6 +2210,17 @@ class MainWindow(QMainWindow):
         if w is not None:
             w.history.remove(sid)
             w.adjustSize()
+
+    def _profile_selected(self, idx: int) -> None:
+        """A profile's numbers are shown: draw its line on the map thicker."""
+        self.map.canvas.selected_shape_pos = idx
+        self.map.canvas.update()
+
+    def _profile_shape_clicked(self, pos: int) -> None:
+        """Ctrl+click on a profile line on the map: show that profile's numbers."""
+        w = getattr(self, "_profile_window", None)
+        if w is not None and getattr(self, "_measure_kind", "") == "profile":
+            w.select(pos)
 
     def _measure_cards_cleared(self) -> None:
         w = self._measure_window_now()
