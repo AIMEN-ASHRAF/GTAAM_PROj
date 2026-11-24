@@ -61,4 +61,5 @@ validated by the backend and saved in the .gtm file; an old project gets the def
 **What changes results today:** Analyze in UTM, UTM zone, resampling (backend). **Applied by the frontend:** analysis defaults (slope units and method, aspect method, hillshade azimuth/altitude,
 contour interval): a tool field tagged `setting="..."` opens with the project's saved value. **Also applied:** decimal places and height unit (Statistics cards), distance unit (Distance and Elevation Profile windows), area unit (Area window).
 Also applied: Match ArcMap (forces planar and hillshade 315/45 in the tool defaults), scale bar (same switch as View), coordinate format (decimal or DMS in the Pixel Inspector), auto-save (checked once a minute; saves only a project that already has a file and unsaved changes).
-**Stored only so far:** author, preview resolution, memory limit.
+Author: stamped as a credit line (author and date) on exported map images.
+**Stored only so far:** preview resolution, memory limit.

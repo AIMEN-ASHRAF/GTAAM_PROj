@@ -1,4 +1,5 @@
 from __future__ import annotations
+from datetime import datetime
 import ctypes
 import json
 import sys
@@ -3263,5 +3264,27 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "Export map image", "terrain_map.png",
                                               "PNG image (*.png);;JPEG image (*.jpg *.jpeg)")
         if path:
-            ok = self.map.surface.grab().save(path)
+            image = self.map.surface.grab()
+            author = str(_project_defaults().get("author") or "").strip()       # Project Settings > Project
+            if author:
+                self._stamp_credit(image, f"{author}  \u00b7  {datetime.now():%d %b %Y}")
+            ok = image.save(path)
             self.show_toast(f"Map image saved · {Path(path).name}" if ok else "Could not save the image")
+
+    @staticmethod
+    def _stamp_credit(image, text: str) -> None:
+        """Small credit line in the bottom-right corner of an exported map image."""
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        font = painter.font()
+        font.setPointSize(9)
+        painter.setFont(font)
+        box = painter.fontMetrics().boundingRect(text)
+        w, h = box.width() + 20, box.height() + 10
+        rect = QRectF(image.width() - w - 12, image.height() - h - 12, w, h)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(255, 255, 255, 210))
+        painter.drawRoundedRect(rect, 6, 6)
+        painter.setPen(QColor("#34404c"))
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+        painter.end()
