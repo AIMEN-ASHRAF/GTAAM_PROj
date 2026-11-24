@@ -22,7 +22,7 @@ import numpy as np
 
 from click import group
 from matplotlib.pyplot import box
-from ui.panels.layer_statistics import MapBox
+from ui.panels.layer_statistics import MapBox, _project_defaults
 from ui.panels.attribute_table import AttributeTableWindow
 import Analysis
 import file as file_tab
@@ -769,6 +769,12 @@ class MeasureHistory(QWidget):
         self.clear_btn.setVisible(has)
 
 
+def _saved_unit(name: str, default: str) -> str:
+    """The unit chosen in Project Settings (e.g. 'square_metres' -> 'square metres'), else the window's own default."""
+    value = _project_defaults().get(name)
+    return str(value).replace("_", " ") if value else default
+
+
 class MeasureWindow(QDialog):
     """A small floating Measure box, like ArcMap's: it updates as points are clicked and has a
     units menu. Segment is the last straight piece, Length is the whole line."""
@@ -852,7 +858,7 @@ class MeasureWindow(QDialog):
         self.units = QComboBox()
         for text, key in self.UNITS:
             self.units.addItem(text, key)
-        self.units.setCurrentIndex(max(0, self.units.findData(self.DEFAULT_UNIT)))
+        self.units.setCurrentIndex(max(0, self.units.findData(_saved_unit("distance_unit", self.DEFAULT_UNIT))))
         self.units.currentIndexChanged.connect(lambda _i: self.unitsChanged.emit(self.units.currentData()))
         top.addWidget(units_label)
         top.addWidget(self.units, 1)
@@ -1264,7 +1270,7 @@ class ProfileWindow(QDialog):
         self.units = QComboBox()
         for text, key in MeasureWindow.UNITS:
             self.units.addItem(text, key)
-        self.units.setCurrentIndex(max(0, self.units.findData(MeasureWindow.DEFAULT_UNIT)))
+        self.units.setCurrentIndex(max(0, self.units.findData(_saved_unit("distance_unit", MeasureWindow.DEFAULT_UNIT))))
         self.units.currentIndexChanged.connect(lambda _i: self.unitsChanged.emit(self.units.currentData()))
         self.true_scale = QCheckBox("True scale (no vertical exaggeration)")
         self.true_scale.setObjectName("measureName")
@@ -1455,7 +1461,7 @@ class AreaWindow(QDialog):
         self.units = QComboBox()
         for text, key in self.UNITS:
             self.units.addItem(text, key)
-        self.units.setCurrentIndex(max(0, self.units.findData(self.DEFAULT_UNIT)))
+        self.units.setCurrentIndex(max(0, self.units.findData(_saved_unit("area_unit", self.DEFAULT_UNIT))))
         self.units.currentIndexChanged.connect(lambda _i: self.unitsChanged.emit(self.units.currentData()))
         top.addWidget(units_label)
         top.addWidget(self.units, 1)
@@ -2845,6 +2851,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Project Settings", f"Could not save the settings:\n{_message(exc)}")
             return
         self.mark_dirty()
+        if self.selected:                                  # decimals and height unit show right away
+            try:
+                self.inspector.show_layer(self.ws.layer(self.selected))
+            except Exception:
+                pass
         self.show_toast("Analyze in UTM is ON" if new["analyze_in_utm"] else "Project settings saved")
 
     def _save_to(self, path: Path, name: str, route: str) -> bool:

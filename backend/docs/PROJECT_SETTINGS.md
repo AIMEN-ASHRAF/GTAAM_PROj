@@ -59,5 +59,5 @@ validated by the backend and saved in the .gtm file; an old project gets the def
 | Performance | preview_resolution, memory_limit_mb | high (low, medium, high, full), 0 / 512..4096 |
 
 **What changes results today:** Analyze in UTM, UTM zone, resampling (backend). **Applied by the frontend:** analysis defaults (slope units and method, aspect method, hillshade azimuth/altitude,
-contour interval): a tool field tagged `setting="..."` opens with the project's saved value. **Stored only so far:**
-units, display, author, auto-save, performance, Match ArcMap.
+contour interval): a tool field tagged `setting="..."` opens with the project's saved value. **Also applied:** decimal places and height unit (Statistics cards), distance unit (Distance and Elevation Profile windows), area unit (Area window).
+**Stored only so far:** slope-unit outside the Slope tool, scale bar, coordinate format, author, auto-save, performance, Match ArcMap.

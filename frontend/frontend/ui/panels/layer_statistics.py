@@ -1319,11 +1319,16 @@ class InspectorPane(QFrame):
 
         if is_raster_view:
             unit = lyr.unit if lyr else ""
+            project = _project_defaults()
+            dp = int(project.get("decimal_places", 1))                 # Project Settings > Display
+            scale = 1.0
+            if unit == "m" and project.get("height_unit") == "feet":   # Project Settings > Units > Height
+                scale, unit = 3.280839895, "ft"
             v.addLayout(self._section_label("Statistics", _value_note(lyr.value_label, unit) if lyr else ""))
             if has_values:
-                cards = [("Minimum", fmt(stats["min"]), unit), ("Maximum", fmt(stats["max"]), unit),
-                         ("Mean", fmt(stats["mean"]), unit), ("Std. deviation", fmt(stats["std"]), unit),
-                         ("Median", fmt(stats["median"]), unit)
+                cards = [("Minimum", fmt(stats["min"] * scale, dp), unit), ("Maximum", fmt(stats["max"] * scale, dp), unit),
+                         ("Mean", fmt(stats["mean"] * scale, dp), unit), ("Std. deviation", fmt(stats["std"] * scale, dp), unit),
+                         ("Median", fmt(stats["median"] * scale, dp), unit)
                          if stats.get("median") is not None else ("Median", DASH, "")]
             else:
                 cards = [("Minimum", DASH, ""), ("Maximum", DASH, ""),
@@ -1339,7 +1344,7 @@ class InspectorPane(QFrame):
             v.addWidget(hist)
             axis = QHBoxLayout()
             if has_values:
-                labels = [fmt(stats["min"], 0), fmt(stats["mean"], 0), fmt(stats["max"], 0)]
+                labels = [fmt(stats["min"] * scale, 0), fmt(stats["mean"] * scale, 0), fmt(stats["max"] * scale, 0)]
             else:
                 labels = [DASH, DASH, DASH]
             for i, text in enumerate(labels):
