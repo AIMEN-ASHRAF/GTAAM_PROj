@@ -598,6 +598,38 @@ def _repolish(w: QWidget) -> None:
 # ----------------------------------------------------------------------------
 # generic settings form (used by ribbon tools, in the pane or in a dialog)
 # ----------------------------------------------------------------------------
+
+# ---- Project Settings -> tool defaults ----
+# A field with setting="slope_method" opens with the project's saved value; the form's own value is the fallback.
+_SETTINGS_PROVIDER: Optional[Callable[[], dict]] = None
+_SETTING_LABELS = {
+    "slope_unit": {"degrees": "Degrees", "percent": "Percent rise"},
+    "slope_method": {"planar": "Planar", "geodesic": "Geodesic"},
+}
+
+
+def set_settings_provider(fn: Optional[Callable[[], dict]]) -> None:
+    """The main window registers a function that returns the current project settings."""
+    global _SETTINGS_PROVIDER
+    _SETTINGS_PROVIDER = fn
+
+
+def _project_defaults() -> dict:
+    try:
+        return dict(_SETTINGS_PROVIDER()) if _SETTINGS_PROVIDER else {}
+    except Exception:
+        return {}
+
+
+def field_default(field: dict, defaults: dict):
+    """The value a field should open with: the project setting if the field follows one, else its own value."""
+    name = field.get("setting")
+    if not name or defaults.get(name) is None:
+        return field.get("value")
+    value = defaults[name]
+    return _SETTING_LABELS.get(name, {}).get(value, value)
+
+
 class SettingsForm(QWidget):
     """Builds a form from field specs.
 
@@ -611,7 +643,9 @@ class SettingsForm(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(10)
+        defaults = _project_defaults()
         for f in fields:
+            f = {**f, "value": field_default(f, defaults)}
             kind = f.get("type", "text")
             label = f.get("label", "")
             key = f.get("key") or label.lower().replace(" ", "_").replace("/", "_")
@@ -675,7 +709,7 @@ class SettingsForm(QWidget):
                 else:
                     w = QSpinBox()
                 w.setRange(f.get("min", 0), f.get("max", 10000))
-                w.setValue(f.get("value", 0))
+                w.setValue(float(f.get("value", 0)) if dec else int(round(float(f.get("value", 0)))))
                 w.setSingleStep(f.get("step", 1))
                 if f.get("suffix"):
                     w.setSuffix(" " + f["suffix"])

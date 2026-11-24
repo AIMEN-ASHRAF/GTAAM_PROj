@@ -58,5 +58,6 @@ validated by the backend and saved in the .gtm file; an old project gets the def
 | Project | author, auto_save_minutes | "", 0 / 1, 5, 10, 30 |
 | Performance | preview_resolution, memory_limit_mb | high (low, medium, high, full), 0 / 512..4096 |
 
-**What changes results today:** Analyze in UTM, UTM zone, resampling (backend). **Stored only so far (the frontend
-reads them and must apply them):** units, analysis defaults, display, author, auto-save, performance.
+**What changes results today:** Analyze in UTM, UTM zone, resampling (backend). **Applied by the frontend:** analysis defaults (slope units and method, aspect method, hillshade azimuth/altitude,
+contour interval): a tool field tagged `setting="..."` opens with the project's saved value. **Stored only so far:**
+units, display, author, auto-save, performance, Match ArcMap.

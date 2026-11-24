@@ -32,7 +32,7 @@ import Tools
 import View
 from ui.panels.icon_generator import icon, pixmap
 from ui.panels.layer_statistics import (
-    ContentsPane, InspectorPane, Layer, SampleWorkspace, SettingsForm,
+    ContentsPane, InspectorPane, Layer, SampleWorkspace, SettingsForm, set_settings_provider,
 )
 from ui.panels.map_bar import PROFILE_COLORS, MapSection
 from ui.panels.project_settings import ProjectSettingsDialog
@@ -1541,6 +1541,7 @@ class AreaWindow(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        set_settings_provider(lambda: self.api_get("/file/project/settings"))   # tools open with the project defaults
         self.setWindowTitle(f"{PROJECT_TITLE} - {APP_NAME}")  
         icon_path = Path(__file__).resolve().parent / "assets" / "gtaam_tool_icon.png"
         self.setWindowIcon(QIcon(str(icon_path)))

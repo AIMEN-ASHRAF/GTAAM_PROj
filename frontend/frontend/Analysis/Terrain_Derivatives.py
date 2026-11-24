@@ -7,8 +7,8 @@ GROUP = {
              tip="Hillshade",
              fields=[
                  dict(type="layer", label="Input DEM"),
-                 dict(type="slider", label="Azimuth", min=0, max=360, value=315, suffix="°"),
-                 dict(type="slider", label="Altitude", min=0, max=90, value=45, suffix="°"),
+                 dict(type="slider", label="Azimuth", setting="hillshade_azimuth", min=0, max=360, value=315, suffix="°"),
+                 dict(type="slider", label="Altitude", setting="hillshade_altitude", min=0, max=90, value=45, suffix="°"),
                  dict(type="spin", label="Z factor", min=0.1, max=100, value=1.0, step=0.1, decimals=1),
              ]),
         dict(id="an-slope", label="Slope", icon="slope", kind="panel",
@@ -16,8 +16,8 @@ GROUP = {
              tip="Slope",
              fields=[
                  dict(type="layer", label="Input DEM"),
-                 dict(type="combo", label="Output units", options=["Degrees", "Percent rise"]),
-                 dict(type="combo", label="Method", options=["Planar", "Geodesic"]),
+                 dict(type="combo", label="Output units", setting="slope_unit", options=["Degrees", "Percent rise"]),
+                 dict(type="combo", label="Method", setting="slope_method", options=["Planar", "Geodesic"]),
              ]),
         dict(id="an-aspect", label="Aspect", icon="compass", kind="panel",
              handler="terrain_derivative", run_label="Run",
@@ -25,7 +25,7 @@ GROUP = {
              fields=[
                  dict(type="layer", label="Input DEM"),
                  dict(type="check", label="Flat areas as -1", value=True),
-                 dict(type="combo", label="Method", options=["Planar", "Geodesic"]),
+                 dict(type="combo", label="Method", setting="slope_method", options=["Planar", "Geodesic"]),
              ]),
         dict(id="an-curvature", label="Curvature", icon="contours", kind="panel",
              handler="terrain_derivative", run_label="Run",
@@ -38,7 +38,7 @@ GROUP = {
                      tip="Contours",
                      fields=[
                          dict(type="layer", label="Input DEM"),
-                         dict(type="spin", label="Interval", min=1, max=2000, value=250, suffix="m"),
+                         dict(type="spin", label="Interval", setting="contour_interval", min=1, max=2000, value=100, suffix="m"),
                          dict(type="spin", label="Base elevation", min=-100000, max=100000, value=0, suffix="m"),
                      ]),
     ],
