@@ -18,6 +18,11 @@ PX_METERS = 0.000264583
 # ----------------------------------------------------------------------------
 # canvas
 # ----------------------------------------------------------------------------
+# One colour per Elevation Profile line; the profile graph uses the same colours.
+PROFILE_COLORS = ["#1f6f9a", "#e07b00", "#2e9e5b", "#b5379b", "#d6453d", "#6c5ce7", "#0f9fa6", "#8a6d1f"]
+MEASURE_COLOR = "#e07b00"
+
+
 class MapCanvas(QWidget):
     pixelMoved = pyqtSignal(float, float)     
     viewChanged = pyqtSignal()
@@ -40,7 +45,8 @@ class MapCanvas(QWidget):
         self.measure_done = False             # a measured line is finished and stays on the map
         self.measure_kind = "line"            # line (Distance) or polygon (Area)
         self.measure_shapes: list[dict] = []  # finished measurements that stay on the map: {kind, pts, label}
-        self.keep_measure = True              # Distance and Area keep every finished shape; Profile shows one line
+        self.keep_measure = True              # every finished line or area stays on the map while the tool is active
+        self.color_shapes = False             # Elevation Profile: each line gets its own colour
         self._hints_shown: set[str] = set()    # measure instructions are shown the first time only
         self._zoom_start = None               # corner of the zoom box being dragged (screen position)
         self._zoom_end = None
@@ -165,11 +171,12 @@ class MapCanvas(QWidget):
         self.modeChanged.emit(mode)
         self.update()
 
-    def start_measure(self, kind: str, keep: bool = True) -> None:
+    def start_measure(self, kind: str, keep: bool = True, colored: bool = False) -> None:
         """Distance ("line") or Area ("polygon"): start a fresh measuring session on the map.
         keep=True: every finished line or area stays on the map while the tool is active."""
         self.measure_kind = kind
         self.keep_measure = keep
+        self.color_shapes = colored
         self.draft.clear()
         self.measure_shapes.clear()
         self.measure_done = False
@@ -189,7 +196,14 @@ class MapCanvas(QWidget):
         self.preview = kind
         self.update()
 
-    def _draw_measure_label(self, p: QPainter, spts, is_area: bool, text: str) -> None:
+    def _draft_color(self) -> str:
+        """Colour of the line being drawn (or just finished): its own colour for Elevation Profile."""
+        if not self.color_shapes:
+            return MEASURE_COLOR
+        n = len(self.measure_shapes) - 1 if self.measure_done else len(self.measure_shapes)
+        return PROFILE_COLORS[max(n, 0) % len(PROFILE_COLORS)]
+
+    def _draw_measure_label(self, p: QPainter, spts, is_area: bool, text: str, color: str = MEASURE_COLOR) -> None:
         """A small tag with the result, at the middle of a line or the centre of an area."""
         if not text or len(spts) < 2:
             return
@@ -204,10 +218,10 @@ class MapCanvas(QWidget):
         p.setFont(f)
         w = p.fontMetrics().horizontalAdvance(text) + 16
         box = QRectF(c.x() - w / 2, c.y() - 28, w, 22)
-        p.setPen(QPen(QColor("#e07b00"), 1.2))
+        p.setPen(QPen(QColor(color), 1.4))
         p.setBrush(QColor(255, 255, 255, 235))
         p.drawRoundedRect(box, 6, 6)
-        p.setPen(QColor("#7a3f00"))
+        p.setPen(QColor("#1b2530"))
         p.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
 
     def set_measure_label(self, text: str) -> None:
@@ -242,9 +256,11 @@ class MapCanvas(QWidget):
         """Double-click / Enter: the line is finished and stays on the map; the tool stays active."""
         area = self.measure_kind == "polygon"
         if len(self.draft) >= (3 if area else 2):
+            color = self._draft_color()                 # before measure_done changes which line is "current"
             self.measure_done = True
             if self.keep_measure:                       # it stays on the map when the next one is started
-                self.measure_shapes.append({"kind": self.measure_kind, "pts": list(self.draft), "label": ""})
+                self.measure_shapes.append({"kind": self.measure_kind, "pts": list(self.draft), "label": "",
+                                            "color": color})
             self.update()
             self.measureChanged.emit(list(self.draft), True)
         else:
@@ -456,7 +472,8 @@ class MapCanvas(QWidget):
                 p.setPen(Qt.PenStyle.NoPen)
                 p.setBrush(QColor(224, 123, 0, 55))
                 p.drawPolygon(QPolygonF(spts))
-            p.setPen(QPen(QColor("#e07b00"), 2))
+            sc = shape.get("color", MEASURE_COLOR)
+            p.setPen(QPen(QColor(sc), 2))
             p.setBrush(Qt.BrushStyle.NoBrush)
             for a, b in zip(spts, spts[1:]):
                 p.drawLine(a, b)
@@ -465,30 +482,32 @@ class MapCanvas(QWidget):
             p.setBrush(QColor("#ffffff"))
             for pt in spts:
                 p.drawEllipse(pt, 4, 4)
-            self._draw_measure_label(p, spts, is_area, shape["label"])
+            self._draw_measure_label(p, spts, is_area, shape["label"], sc)
         if self.measure_done and self.measure_shapes and self.draft:
             self._draw_measure_label(p, [self.to_screen(x, y) for x, y in self.draft],
-                                     self.measure_kind == "polygon", self.measure_shapes[-1]["label"])
+                                     self.measure_kind == "polygon", self.measure_shapes[-1]["label"],
+                                     self.measure_shapes[-1].get("color", MEASURE_COLOR))
 
         # polygon being drawn
         if self.draft:
+            dcol = QColor(self._draft_color())
             pts = [self.to_screen(x, y) for x, y in self.draft]
             area_mode = self.mode == "measure" and self.measure_kind == "polygon"
             if area_mode and len(pts) >= 3:                 # Area: shade the shape being measured
                 p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor(224, 123, 0, 55))
+                p.setBrush(QColor(dcol.red(), dcol.green(), dcol.blue(), 55))
                 p.drawPolygon(QPolygonF(pts))
-            p.setPen(QPen(QColor("#e07b00"), 2))
+            p.setPen(QPen(dcol, 2))
             p.setBrush(Qt.BrushStyle.NoBrush)
             for a, b in zip(pts, pts[1:]):
                 p.drawLine(a, b)
             if area_mode and len(pts) >= 3:
                 p.drawLine(pts[-1], pts[0])               # closing edge
             if self.hover is not None and not self.measure_done:
-                dash = QPen(QColor("#e07b00"), 1.5, Qt.PenStyle.DashLine)
+                dash = QPen(dcol, 1.5, Qt.PenStyle.DashLine)
                 p.setPen(dash)
                 p.drawLine(pts[-1], self.to_screen(*self.hover))
-            p.setPen(QPen(QColor("#e07b00"), 2))
+            p.setPen(QPen(dcol, 2))
             p.setBrush(QColor("#ffffff"))
             for pt in pts:
                 p.drawEllipse(pt, 4, 4)

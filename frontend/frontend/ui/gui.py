@@ -34,7 +34,7 @@ from ui.panels.icon_generator import icon, pixmap
 from ui.panels.layer_statistics import (
     ContentsPane, InspectorPane, Layer, SampleWorkspace, SettingsForm,
 )
-from ui.panels.map_bar import MapSection
+from ui.panels.map_bar import PROFILE_COLORS, MapSection
 
 # order of the ribbon tabs
 TAB_MODULES = [file_tab, View, Analysis, Tools, Terrain_Editing, Terrain_Mosaic]
@@ -842,38 +842,52 @@ class MeasureWindow(QDialog):
 
 
 class ProfileChart(QWidget):
-    """Draws distance (across) against height (up) for the profile line. Move the mouse over it to read values."""
+    """Draws distance (across) against height (up) for the profile lines, one colour per line (the same colour as
+    the line on the map). Move the mouse over it to read the values of every line at that distance."""
 
     def __init__(self) -> None:
         super().__init__()
         self.setMinimumSize(470, 250)
         self.setMouseTracking(True)
-        self.res: dict | None = None
+        self.series: list[dict] = []          # {"res": profile result, "color": "#hex", "name": "Profile 1"}
+        self.res: dict | None = None          # the newest profile (used for the true-scale box)
         self.true_scale = False
-        self._hover: int | None = None
+        self._hover: float | None = None      # distance along the axis under the mouse
 
-    def set_result(self, res: dict | None, true_scale: bool) -> None:
-        self.res, self.true_scale, self._hover = res, true_scale, None
+    def set_series(self, series: list[dict], true_scale: bool) -> None:
+        self.series = [s for s in series if s.get("res")]
+        self.res = self.series[-1]["res"] if self.series else None
+        self.true_scale, self._hover = true_scale, None
         self.update()
 
+    def set_result(self, res: dict | None, true_scale: bool) -> None:
+        self.set_series([{"res": res, "color": "#1f6f9a", "name": ""}] if res else [], true_scale)
+
+    def _has_data(self) -> bool:
+        return any(v is not None for s in self.series for v in s["res"]["elevation"])
+
     def _data_range(self):
-        """Lowest and highest height on the line, with a little room above and below."""
-        el = [v for v in self.res["elevation"] if v is not None]
+        """Lowest and highest height on all the lines, with a little room above and below."""
+        el = [v for s in self.series for v in s["res"]["elevation"] if v is not None]
         lo, hi = min(el), max(el)
         if hi - lo < 1e-9:
             lo, hi = lo - 1, hi + 1
         pad = (hi - lo) * 0.08
         return lo - pad, hi + pad
 
+    def _total(self) -> float:
+        """The distance axis runs to the longest line."""
+        return max((s["res"]["distance"][-1] or 0.0) for s in self.series) or 1.0
+
     # plot rectangle inside the widget (room for axis labels)
     def _plot(self) -> QRectF:
         base = QRectF(66, 14, max(10, self.width() - 66 - 18), max(10, self.height() - 14 - 46))
-        if self.true_scale and self.res and any(v is not None for v in self.res["elevation"]):
+        if self.true_scale and self.series and self._has_data():
             # True scale: the box itself gets the real shape (same metres per pixel across and up),
             # so a long, low line gives a short, wide box and the height axis never shows empty
             # heights below the ground. A very steep short line is kept within the normal box.
             lo, hi = self._data_range()
-            total_m = max(self.res.get("total_distance_m") or 1.0, 1e-9)
+            total_m = max(max((s["res"].get("total_distance_m") or 1.0) for s in self.series), 1e-9)
             h = base.width() * (hi - lo) / total_m
             h = min(base.height(), max(14.0, h))
             return QRectF(base.left(), base.top() + (base.height() - h) / 2, base.width(), h)
@@ -882,24 +896,19 @@ class ProfileChart(QWidget):
     def _range(self):
         return self._data_range()
 
-    def _xy(self, i: int, lo: float, hi: float):
-        plot, dist = self._plot(), self.res["distance"]
-        total = dist[-1] or 1.0
-        z = self.res["elevation"][i]
+    def _xy(self, res: dict, i: int, lo: float, hi: float):
+        plot, dist, total = self._plot(), res["distance"], self._total()
+        z = res["elevation"][i]
         x = plot.left() + dist[i] / total * plot.width()
         y = None if z is None else plot.bottom() - (z - lo) / (hi - lo) * plot.height()
         return x, y
 
     def mouseMoveEvent(self, e) -> None:
-        if not self.res:
+        if not self.series:
             return
-        plot, dist = self._plot(), self.res["distance"]
+        plot = self._plot()
         frac = (e.position().x() - plot.left()) / plot.width()
-        if 0 <= frac <= 1:
-            target = frac * (dist[-1] or 1.0)
-            self._hover = min(range(len(dist)), key=lambda k: abs(dist[k] - target))
-        else:
-            self._hover = None
+        self._hover = frac * self._total() if 0 <= frac <= 1 else None
         self.update()
 
     def leaveEvent(self, e) -> None:
@@ -929,15 +938,17 @@ class ProfileChart(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), QColor("#ffffff"))
         plot = self._plot()
-        if not self.res or all(v is None for v in self.res["elevation"]):
+        if not self.series or not self._has_data():
             p.setPen(QPen(QColor("#dde2e7"), 1))
             p.drawRect(plot)
             p.setPen(QColor("#6b737b"))
             p.drawText(plot, Qt.AlignmentFlag.AlignCenter,
-                       "No elevation data under this line." if self.res else "Draw a line on the map.")
+                       "No elevation data under this line." if self.series else "Draw a line on the map.")
             return
+        multi = len(self.series) > 1
         lo, hi = self._range()
-        total, unit = self.res["distance"][-1] or 1.0, self.res.get("distance_units", "m")
+        total = self._total()
+        unit = self.series[-1]["res"].get("distance_units", "m")
         small = QFont(self.font())
         small.setPointSizeF(8)
         p.setFont(small)
@@ -972,7 +983,8 @@ class ProfileChart(QWidget):
         title_font.setBold(True)
         p.setFont(title_font)
         p.setPen(axis_ink)
-        x_title = f"Distance along the line ({unit})" + ("  \u00b7  true scale: 1 m up = 1 m across" if self.true_scale else "")
+        x_title = (f"Distance along the line ({unit})" if not multi else f"Distance along each line ({unit})") \
+            + ("  \u00b7  true scale: 1 m up = 1 m across" if self.true_scale else "")
         p.drawText(QRectF(plot.left() - 40, plot.bottom() + 22, plot.width() + 40, 16), Qt.AlignmentFlag.AlignCenter, x_title)
         p.save()
         p.translate(11, plot.center().y())
@@ -981,59 +993,108 @@ class ProfileChart(QWidget):
         p.restore()
         p.setFont(small)
 
-        # filled area under the line, then the line (a gap in the data breaks the line)
-        runs, run = [], []
-        for i in range(len(self.res["elevation"])):
-            x, y = self._xy(i, lo, hi)
-            if y is None:
-                if run:
-                    runs.append(run)
-                run = []
-            else:
-                run.append(QPointF(x, y))
-        if run:
-            runs.append(run)
-        for r in runs:
-            poly = QPolygonF(r + [QPointF(r[-1].x(), plot.bottom()), QPointF(r[0].x(), plot.bottom())])
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(31, 111, 154, 46))
-            p.drawPolygon(poly)
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.setPen(QPen(QColor("#1f6f9a"), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-            p.drawPolyline(QPolygonF(r))
+        # for every profile: filled area under the line, then the line (a gap in the data breaks the line)
+        for ser in self.series:
+            res, col = ser["res"], QColor(ser["color"])
+            runs, run = [], []
+            for i in range(len(res["elevation"])):
+                x, y = self._xy(res, i, lo, hi)
+                if y is None:
+                    if run:
+                        runs.append(run)
+                    run = []
+                else:
+                    run.append(QPointF(x, y))
+            if run:
+                runs.append(run)
+            for r in runs:
+                poly = QPolygonF(r + [QPointF(r[-1].x(), plot.bottom()), QPointF(r[0].x(), plot.bottom())])
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(col.red(), col.green(), col.blue(), 26 if multi else 46))
+                p.drawPolygon(poly)
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.setPen(QPen(col, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+                p.drawPolyline(QPolygonF(r))
 
-        # A and B mark the two ends of the line
-        pts = [(i, self._xy(i, lo, hi)) for i in range(len(self.res["elevation"]))]
-        pts = [(i, xy) for i, xy in pts if xy[1] is not None]
-        if pts:
-            letter_font = QFont(self.font())
-            letter_font.setPointSizeF(7.5)
-            letter_font.setBold(True)
-            for letter, (_i, (x, y)) in (("A", pts[0]), ("B", pts[-1])):
-                p.setPen(QPen(QColor("#ffffff"), 1.5))
-                p.setBrush(QColor("#1b2530"))
-                p.drawEllipse(QPointF(x, y), 7, 7)
-                p.setFont(letter_font)
-                p.setPen(QColor("#ffffff"))
-                p.drawText(QRectF(x - 7, y - 7, 14, 14), Qt.AlignmentFlag.AlignCenter, letter)
+        # the two ends of each line: A and B for one profile, a coloured dot at each end for several
+        letter_font = QFont(self.font())
+        letter_font.setPointSizeF(7.5)
+        letter_font.setBold(True)
+        for ser in self.series:
+            res = ser["res"]
+            pts = [(i, self._xy(res, i, lo, hi)) for i in range(len(res["elevation"]))]
+            pts = [(i, xy) for i, xy in pts if xy[1] is not None]
+            if not pts:
+                continue
+            if multi:
+                for _i, (x, y) in (pts[0], pts[-1]):
+                    p.setPen(QPen(QColor("#ffffff"), 1.5))
+                    p.setBrush(QColor(ser["color"]))
+                    p.drawEllipse(QPointF(x, y), 5, 5)
+            else:
+                for letter, (_i, (x, y)) in (("A", pts[0]), ("B", pts[-1])):
+                    p.setPen(QPen(QColor("#ffffff"), 1.5))
+                    p.setBrush(QColor("#1b2530"))
+                    p.drawEllipse(QPointF(x, y), 7, 7)
+                    p.setFont(letter_font)
+                    p.setPen(QColor("#ffffff"))
+                    p.drawText(QRectF(x - 7, y - 7, 14, 14), Qt.AlignmentFlag.AlignCenter, letter)
+
+        # legend: which colour is which profile
+        if multi:
+            p.setFont(small)
+            lx, ly = plot.left() + 8, plot.top() + 4
+            w = 24 + max(p.fontMetrics().horizontalAdvance(s["name"]) for s in self.series) + 10
+            box = QRectF(lx - 4, ly - 2, w, 15 * len(self.series) + 4)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(255, 255, 255, 215))
+            p.drawRoundedRect(box, 4, 4)
+            for k, ser in enumerate(self.series):
+                y = ly + 15 * k + 7
+                p.setPen(QPen(QColor(ser["color"]), 3))
+                p.drawLine(QPointF(lx, y), QPointF(lx + 14, y))
+                p.setPen(QColor("#1b2530"))
+                p.drawText(QRectF(lx + 20, y - 7, w, 14), Qt.AlignmentFlag.AlignVCenter, ser["name"])
 
         if self._hover is not None:
-            x, y = self._xy(self._hover, lo, hi)
+            hx = plot.left() + self._hover / total * plot.width()
             p.setFont(small)
             p.setPen(QPen(QColor("#8a949c"), 1, Qt.PenStyle.DashLine))
-            p.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
-            if y is not None:
+            p.drawLine(QPointF(hx, plot.top()), QPointF(hx, plot.bottom()))
+            lines = []
+            for ser in self.series:
+                res = ser["res"]
+                dist = res["distance"]
+                if self._hover > (dist[-1] or 0.0) + 1e-9:          # this line is shorter than the mouse position
+                    continue
+                i = min(range(len(dist)), key=lambda k: abs(dist[k] - self._hover))
+                x, y = self._xy(res, i, lo, hi)
+                if y is None:
+                    continue
                 p.setPen(QPen(QColor("#ffffff"), 1.5))
-                p.setBrush(QColor("#c2571a"))
+                p.setBrush(QColor(ser["color"]) if multi else QColor("#c2571a"))
                 p.drawEllipse(QPointF(x, y), 4, 4)
-                text = f"{self.res['elevation'][self._hover]:,.1f} m  at  {self.res['distance'][self._hover]:,.2f} {unit}"
-                box_y = plot.top() + 4 if plot.height() >= 60 else plot.top() - 24     # above a short box
-                box = QRectF(min(x + 8, plot.right() - 190), box_y, 186, 18)
+                z = res["elevation"][i]
+                lines.append((ser["color"], f"{z:,.1f} m  at  {dist[i]:,.2f} {unit}" if not multi
+                              else f"{ser['name']}: {z:,.1f} m  at  {dist[i]:,.2f} {unit}"))
+            if lines:
+                bw = 186 if not multi else 250
+                bh = 18 * len(lines) if not multi else 18 * len(lines) + 2
+                box_y = plot.top() + 4 if plot.height() >= 60 + bh else plot.top() - bh - 6
+                if multi:
+                    box_y = max(box_y, plot.top() + 15 * len(self.series) + 10) if plot.height() >= 60 + bh else box_y
+                box = QRectF(min(hx + 8, plot.right() - bw - 4), box_y, bw, bh)
                 p.setPen(Qt.PenStyle.NoPen)
                 p.setBrush(QColor(37, 42, 47, 220))
                 p.drawRoundedRect(box, 4, 4)
-                p.setPen(QColor("#ffffff"))
-                p.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+                for k, (colr, text) in enumerate(lines):
+                    row = QRectF(box.left() + 14, box.top() + 1 + 18 * k, bw - 18, 18)
+                    if multi:
+                        p.setBrush(QColor(colr))
+                        p.drawEllipse(QPointF(box.left() + 8, row.center().y()), 3.5, 3.5)
+                    p.setPen(QColor("#ffffff"))
+                    p.drawText(row if multi else box, Qt.AlignmentFlag.AlignCenter if not multi else
+                               Qt.AlignmentFlag.AlignVCenter, text)
 
 
 class ProfileWindow(QDialog):
@@ -1050,6 +1111,8 @@ class ProfileWindow(QDialog):
         self.setModal(False)
         self.setStyleSheet(MeasureWindow.style())
         self.res: dict | None = None
+        self.profiles: dict[int, dict] = {}      # line number (0, 1, ...) -> its profile result; all are drawn together
+        self.unit_key: dict[int, str] = {}       # line number -> the distance units its result was measured in
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 10, 10)
         card = QFrame()
@@ -1124,7 +1187,20 @@ class ProfileWindow(QDialog):
         self.method.setText("Length")
         self.layer.setText(name)
 
-    def show_waiting(self, text: str = "Click the first point of the line on the map.") -> None:
+    def clear_profiles(self) -> None:
+        """A new Elevation Profile session: forget every earlier line."""
+        self.profiles.clear()
+        self.unit_key.clear()
+
+    def show_waiting(self, text: str = "Click the first point of the line on the map.", idx: int | None = None) -> None:
+        """idx = the line being drawn that has no result yet; the other lines stay on the graph."""
+        if idx is not None:
+            self.profiles.pop(idx, None)
+        else:
+            self.profiles.clear()
+        if self.profiles:
+            self._show_latest()
+            return
         self.res = None
         self.chart.set_result(None, False)
         self.hero.hide()
@@ -1133,13 +1209,23 @@ class ProfileWindow(QDialog):
         self.adjustSize()
 
     def _redraw(self) -> None:
-        if self.res is not None:
-            self.chart.set_result(self.res, self.true_scale.isChecked())
+        series = [{"res": r, "color": PROFILE_COLORS[i % len(PROFILE_COLORS)], "name": f"Profile {i + 1}"}
+                  for i, r in sorted(self.profiles.items())]
+        self.chart.set_series(series, self.true_scale.isChecked())
 
-    def show_result(self, res: dict, finished: bool) -> None:
+    def _show_latest(self) -> None:
+        """The numbers under the graph belong to the newest line; the graph shows all of them."""
+        idx = max(self.profiles)
+        self.show_result(self.profiles[idx], True, idx)
+
+    def show_result(self, res: dict, finished: bool, idx: int = 0) -> None:
+        self.profiles[idx] = res
         self.res = res
         self._redraw()
         u = res.get("distance_units", "m")
+        n = len(self.profiles)
+        dot = f"<span style='color:{PROFILE_COLORS[idx % len(PROFILE_COLORS)]}'>\u25cf</span> " if n > 1 else ""
+        self.method.setText(f"{dot}Profile {idx + 1} length" if n > 1 else "Length")
 
         def m(v, suffix=" m"):
             return "–" if v is None else f"{v:,.1f}{suffix}"
@@ -1821,13 +1907,22 @@ class MainWindow(QMainWindow):
         self._measure_done = False
         w = self._profile_window
         w.set_layer(source.name, "4326" in (source.crs or ""))
+        w.clear_profiles()
         w.show_waiting()
         if not w.isVisible():
             w.move(self.map.mapToGlobal(QPoint(24, 70)))
         w.show()
         w.raise_()
-        self.map.canvas.start_measure("line", keep=False)
+        self.map.canvas.start_measure("line", colored=True)
         self.map.canvas.setFocus()
+
+    def _profile_fetch(self, lyr, points: list, units: str) -> dict:
+        """Ask the backend for the elevation profile along one clicked line."""
+        display_height, display_width = lyr.rgba.shape[:2]
+        pixels = [[cy * lyr.source_height / display_height, cx * lyr.source_width / display_width]
+                  for cx, cy in points]
+        return self.api_post("/analysis/measure/elevation-profile", {
+            "layer_id": lyr.id, "pixels": pixels, "units": units, "samples": 400})
 
     def _profile_update(self) -> None:
         w = getattr(self, "_profile_window", None)
@@ -1835,19 +1930,30 @@ class MainWindow(QMainWindow):
         points = getattr(self, "_measure_points", [])
         if w is None or lyr is None:
             return
+        canvas = self.map.canvas
+        # which line this is: finished lines are kept in canvas.measure_shapes (the one just finished is the last)
+        idx = len(canvas.measure_shapes) - 1 if self._measure_done and canvas.measure_shapes else len(canvas.measure_shapes)
+        units = w.units.currentData()
+        # the distance units were changed: the lines drawn earlier are measured again in the new units
+        for k, shape in enumerate(canvas.measure_shapes):
+            if k != idx and w.unit_key.get(k) != units:
+                try:
+                    w.profiles[k] = self._profile_fetch(lyr, shape["pts"], units)
+                    w.unit_key[k] = units
+                except Exception as e:
+                    self.show_toast(f"Elevation profile: {e}")
         if len(points) < 2:
-            w.show_waiting("Click the second point." if points else "Click the first point of the line on the map.")
+            w.show_waiting("Click the second point." if points else "Click the first point of the line on the map.", idx)
             return
-        display_height, display_width = lyr.rgba.shape[:2]
-        pixels = [[cy * lyr.source_height / display_height, cx * lyr.source_width / display_width]
-                  for cx, cy in points]
         try:
-            res = self.api_post("/analysis/measure/elevation-profile", {
-                "layer_id": lyr.id, "pixels": pixels, "units": w.units.currentData(), "samples": 400})
+            res = self._profile_fetch(lyr, points, units)
         except Exception as e:
             self.show_toast(f"Elevation profile: {e}")
             return
-        w.show_result(res, self._measure_done)
+        w.unit_key[idx] = units
+        w.show_result(res, self._measure_done, idx)
+        if self._measure_done:
+            canvas.set_measure_label(f"Profile {idx + 1} \u00b7 {res['total_distance']:,.2f} {res['distance_units']}")
         self.set_status(f"Elevation profile \u00b7 {lyr.name} \u00b7 {res['total_distance']:,.3f} {res['distance_units']}")
 
     def _measure_changed(self, points: list, finished: bool) -> None:
