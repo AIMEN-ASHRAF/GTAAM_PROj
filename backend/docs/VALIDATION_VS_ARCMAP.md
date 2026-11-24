@@ -124,3 +124,17 @@ Layer Statistics and Histogram, surface (3D) area, aspect and hillshade on degre
 - The app squares non-square cells (area-weighted row averaging), then runs the geodesic slope with the outer 1-cell border dropped, like ArcMap.
 - Copernicus N65E060 matches ArcMap almost exactly. The AW3D30 65N tile still shows 0.17 deg mean abs diff (max 1.135) with the same method. Cause not proven; one guess is that ArcMap resamples integer rasters (AW3D30) differently from float rasters (Copernicus).
 - Not yet tested: Copernicus near 80N (about 5" cells) and 80S.
+
+## Copernicus GLO-30 at 80N and 80S (5" x 1" cells)
+
+Tiles N80 W078 (Ellesmere Island) and S81 E160 (Antarctica, negative latitudes), each 720 cols x 3600 rows, no holes. ArcMap Slope, GEODESIC, DEGREE; output 720 x 720 (5" square = the larger side, same rule as at 65N).
+
+| Tile | Valid cells (ArcMap / app) | Mean (ArcMap / app) | Mean abs diff | Max diff | Within 0.01 deg | Within 0.1 deg |
+|---|---|---|---|---|---|---|
+| N80 W078 | 515,524 / 515,524 | 8.6218 / 8.6399 | 0.160 | 11.98 | 17.1% | 65.2% |
+| S81 E160 | 515,524 / 515,524 | 3.2943 / 3.3118 | 0.147 | 9.11 | 7.7% | 55.3% |
+
+- Matches ArcMap: output grid size and cell size, valid-cell count (border rule), sign handling for the southern hemisphere, and the overall mean to about 0.2%.
+- Does not match cell by cell: when five 1" rows are combined into one 5" row, ArcMap's exact rule is unknown. The app uses an area-weighted block mean, which is among the closest options tried (nearest row, triangle and Hann kernels, rows 1-3 mean). A triangle kernel over 5 rows is marginally closer (0.134) but still not exact, so the app was left unchanged.
+- Result by ratio so far: 1:1 exact (~0.001 deg), 2:1 exact on float data (Copernicus N65, 0.0002 deg), 2:1 on integer data (AW3D30 65N) 0.17 deg, 5:1 about 0.15 deg.
+- Practical meaning: at 80 deg latitude the statistics agree closely, but individual cell values can differ by a degree or more on steep ground (max about 12 deg).
