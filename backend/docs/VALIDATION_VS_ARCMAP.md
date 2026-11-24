@@ -157,3 +157,27 @@ Tiles N80 W078 (Ellesmere Island) and S81 E160 (Antarctica, negative latitudes),
 **Re-check after the 23-24 Nov code changes (projected `dem_utm43.tif`):** Curvature still matches on 100% of pixels (max difference 1e-15; 12,590,707 valid cells in both). Hillshade (Az 315, Alt 45, Z 1) still matches on 100% of pixels after rounding down (mean 171.51 in both).
 
 **Not done:** Curvature on a degree DEM (ArcMap's Curvature dialog would not open in the session); Hillshade and Aspect (planar) on Copernicus tiles above 50 N.
+
+
+## Quality & Statistics (Layer Statistics, Histogram, NoData Check, Outlier Check)
+
+Tested on 4 rasters: AW3D30 N033E073 (integer, 3600x3600), Copernicus N65 (float), and two UTM-reprojected
+versions of N65 that have NoData borders (about 10 % of the cells). ArcMap numbers come from ArcMap 10.8:
+**Calculate Statistics with skip factor 1** (every cell, written to the file's .aux.xml) and
+**Build Raster Attribute Table** (exact count of cells per value).
+
+| Tool | What was compared | Result |
+|---|---|---|
+| Layer Statistics | min, max, mean, std dev on all 4 rasters | min and max identical; mean identical to 11 digits; std dev identical to 11 digits **after** the change below |
+| Histogram | AW3D30 (12,960,000 cells, 3,147 distinct heights): app bins vs the same bins rebuilt from ArcMap's per-value counts, 50 and 256 bins | every bin identical (0 bins differ), totals equal |
+| NoData Check | UTM41N: ArcMap valid cells 5,827,626 vs app 5,827,626; so NoData = 657,684 in both. AW3D30: 0 in both | identical |
+| Outlier Check | ArcMap has no outlier tool. Recomputed by hand from ArcMap's own value table (own weighted percentile, no numpy) | IQR fences and outlier counts identical; z-score fences identical to 4 decimals, counts identical |
+
+Two small differences were found and fixed on the app side:
+1. **Standard deviation** - ArcMap divides by n-1 (sample form); the app divided by n. The gap was about 1e-7 of the
+   value on these big rasters but it is now exactly ArcMap's definition. The z-score outlier rule uses the same std.
+2. **Mean accuracy** - the app added up in 32-bit (mean off by about 0.0007 on the AW3D30 tile); it now adds up in 64-bit.
+
+Not compared with ArcMap (no matching ArcMap figure): the **median** shown by Layer Statistics, and the
+Outlier Check itself (checked by hand calculation only, as above). The histogram default is 50 bins; ArcMap's
+display histogram uses 256, and both bin layouts were checked.

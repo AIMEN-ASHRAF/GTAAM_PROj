@@ -11,7 +11,7 @@ METHODS = ("iqr", "zscore")
 def bounds(data: np.ndarray, method: str = "iqr", threshold: float | None = None):
     if method not in METHODS:
         raise ValueError(f"method must be one of {METHODS}")
-    valid = data[np.isfinite(data)]
+    valid = data[np.isfinite(data)].astype("float64")   # 64-bit so the bounds are exact
     if valid.size == 0:
         raise ValueError("The layer has no valid cells.")
     if method == "iqr":
@@ -20,7 +20,7 @@ def bounds(data: np.ndarray, method: str = "iqr", threshold: float | None = None
         spread = q3 - q1
         return q1 - k * spread, q3 + k * spread, k
     k = 3.0 if threshold is None else threshold
-    mean, std = valid.mean(), valid.std()
+    mean, std = valid.mean(), valid.std(ddof=1)   # n-1, same as Layer Statistics / ArcMap
     return mean - k * std, mean + k * std, k
 
 
