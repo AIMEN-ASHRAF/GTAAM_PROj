@@ -68,6 +68,10 @@ def test_every_backend_endpoint_is_reachable_through_the_client(client, tmp_path
     assert opened["layer_count"] == 3 and opened["missing_layers"] == []
     assert any(l["id"] == lid for l in f.layers())                       # ids survive save/open
     f.reorder_layers([l["id"] for l in reversed(f.layers())])
+    assert f.project_settings()["analyze_in_utm"] is False                  # Project Settings
+    assert f.update_project_settings(analyze_in_utm=True, utm_zone="auto")["analyze_in_utm"] is True
+    assert f.utm_preview(lid)["applies"] in (True, False)
+    f.update_project_settings(analyze_in_utm=False)
     assert f.update_layer(lid, name="Hill", opacity=0.8, visible=True)["name"] == "Hill"
     f.remove_layer(base["id"])
     assert f.map_image(lid, ramp="viridis", vmin=1500, vmax=1900, max_pixels=5000)[:4] == b"\x89PNG"

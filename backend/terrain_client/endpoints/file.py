@@ -27,6 +27,21 @@ class FileApi(Endpoints):
     def save_project_as(self, path: str, gui: dict | None = None, name: str | None = None) -> dict:
         return self._h.post("/file/project/save-as", json={"path": path, "gui": gui, "name": name})
 
+    # ---- Project Settings (saved inside the project file) ----
+    def project_settings(self) -> dict:
+        """{"analyze_in_utm": False, "utm_zone": "auto", "resampling": "bilinear"}"""
+        return self._h.get("/file/project/settings")
+
+    def update_project_settings(self, analyze_in_utm: bool | None = None, utm_zone: str | None = None,
+                                resampling: str | None = None) -> dict:
+        """Change only the fields given. utm_zone: "auto" or e.g. "43N"; resampling: nearest | bilinear | cubic."""
+        return self._h.put("/file/project/settings", json=clean({
+            "analyze_in_utm": analyze_in_utm, "utm_zone": utm_zone, "resampling": resampling}))
+
+    def utm_preview(self, layer_id: str) -> dict:
+        """Which UTM zone 'Analyze in UTM' would use for a layer: {"applies", "zone", "epsg", "reason"}."""
+        return self._h.get("/file/project/settings/utm-preview", params={"layer_id": layer_id})
+
     # ---- Add Data ----
     def add_raster(self, path: str, name: str | None = None) -> dict:
         """Load a DEM. Returns the layer info (use its "id" for every other call)."""

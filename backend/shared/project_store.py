@@ -33,6 +33,11 @@ def default_workspace() -> dict:
     })
 
 
+def default_settings() -> dict:
+    """Per-project analysis settings. Saved in the project file ("settings")."""
+    return {"analyze_in_utm": False, "utm_zone": "auto", "resampling": "bilinear"}
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -46,6 +51,7 @@ class ProjectStore:
         self.path: str | None = None
         self.created = _now()
         self.workspace = default_workspace()
+        self.settings = default_settings()   # Project Settings (Analyze in UTM, zone, resampling)
         self.gui: dict = {}                # the window's own state (view, colour ramp, ...)
         self.canvases: list[dict] = []     # map canvases: each lists its own layers (shared data)
         self.active_canvas: str | None = None
@@ -61,6 +67,16 @@ class ProjectStore:
     def new(self, name: str) -> None:
         layer_store.clear()
         self.reset(name)
+
+    def update_settings(self, changes: dict) -> dict:
+        """Change some settings; the project counts as changed (unsaved) when a value really changed."""
+        new = {**self.settings, **{k: v for k, v in changes.items() if v is not None}}
+        if new.get("utm_zone"):
+            new["utm_zone"] = str(new["utm_zone"]).upper() if str(new["utm_zone"]).lower() != "auto" else "auto"
+        if new != self.settings:
+            self.settings = new
+            layer_store.version += 1
+        return dict(self.settings)
 
     def reset_workspace(self) -> None:
         self.workspace = default_workspace()
@@ -152,7 +168,7 @@ class ProjectStore:
                           "meta": layer.meta})
         doc = {"format": FORMAT, "version": FORMAT_VERSION, "name": self.name,
                "created": self.created, "saved": _now(), "workspace": self.workspace,
-               "gui": self.gui, "layers": saved,
+               "settings": self.settings, "gui": self.gui, "layers": saved,
                "canvases": self._prune(self.canvases, {l["id"] for l in saved}),
                "active_canvas": self.active_canvas}
         target_p.parent.mkdir(parents=True, exist_ok=True)
@@ -208,6 +224,7 @@ class ProjectStore:
         self.name = doc.get("name", p.stem)
         self.created = doc.get("created", _now())
         self.workspace = {**default_workspace(), **doc.get("workspace", {})}
+        self.settings = {**default_settings(), **(doc.get("settings") or {})}     # older projects: defaults
         self.gui = doc.get("gui", {}) or {}
         here = {l.id for l in layer_store.list()}
         entries = [e for e in doc.get("layers", []) if e.get("id") in here]

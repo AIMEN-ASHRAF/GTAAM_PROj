@@ -11,6 +11,7 @@ from core.measure import profile as core_profile
 from core.measure.surface_area import surface_area
 from core.raster.crs import cell_size_by_row, grid_north_offset, is_geographic
 from core.raster.resample import square_cells
+from core.raster.utm import to_utm, zone_label
 from core.stats import histogram, layer_stats, nodata_check, outliers
 from core.terrain.aspect import aspect_from_gradients, compute_aspect, flat_window_mask
 from core.terrain.contours import contour_lines
@@ -24,15 +25,43 @@ from core.terrain.tpi import compute_tpi
 from config import get_settings
 from shared.errors import BadRequest
 from shared.layer_store import Layer, add_raster_layer, add_vector_layer, get_raster_layer
+from shared.project_store import project
 
 
 def _layer(layer_id: str) -> Layer:
     return get_raster_layer(layer_id)
 
 
+_utm_cache: dict[tuple, tuple] = {}          # (layer id, zone, resampling) -> (the DEM data it was made from, UTM raster)
+
+
+def _source(layer_id: str) -> Layer:
+    """The layer a terrain tool works on. With Project Settings > 'Analyze in UTM' on, a degree DEM is first
+    moved to UTM (metres) and the tool runs on that copy; otherwise it is the layer itself."""
+    src = _layer(layer_id)
+    s = project.settings
+    if not s.get("analyze_in_utm") or not is_geographic(src.raster):
+        return src
+    key = (src.id, s["utm_zone"], s["resampling"])
+    hit = _utm_cache.get(key)
+    if hit is None or hit[0] is not src.raster.data:
+        try:
+            utm_raster, epsg = to_utm(src.raster, s["utm_zone"], s["resampling"])
+        except ValueError as e:
+            raise BadRequest(str(e), code="utm_not_possible")
+        if len(_utm_cache) >= 3:
+            _utm_cache.pop(next(iter(_utm_cache)))
+        hit = _utm_cache[key] = (src.raster.data, utm_raster, epsg)
+    label = zone_label(hit[2])
+    return Layer(name=f"{src.name} (UTM {label})", kind="raster", id=src.id, raster=hit[1], source=src.source,
+                 meta={"analysis_utm": {"zone": label, "epsg": hit[2], "resampling": s["resampling"]}})
+
+
 def _derive(src: Layer, data: np.ndarray, tool: str, label: str) -> dict:
     out = add_raster_layer(src.raster.with_data(data), f"{src.name} - {label}",
                            derived_from=src.id, tool=tool)
+    if src.meta.get("analysis_utm"):
+        out.meta["analysis_utm"] = src.meta["analysis_utm"]       # remember it was computed in UTM
     return {"layer": out.info(), "statistics": layer_stats.compute(data)}
 
 
@@ -134,7 +163,7 @@ def outlier_check(layer_id: str, method: str, threshold: float | None) -> dict:
 # ---- surface analysis & terrain derivatives (all create a new raster layer) ----
 def _surface(layer_id: str, tool: str, label: str,
              fn: Callable[[np.ndarray, float | np.ndarray, float | np.ndarray], np.ndarray]) -> dict:
-    src = _layer(layer_id)
+    src = _source(layer_id)
     dx, dy = cell_size_by_row(src.raster)       # degree rasters: one size per row
     return _derive(src, fn(src.raster.data, dx, dy), tool, label)
 
@@ -146,7 +175,7 @@ def hillshade(layer_id: str, azimuth: float, altitude: float, z_factor: float) -
 
 def slope(layer_id: str, units: str, method: str = "planar") -> dict:
     label = f"slope ({units})" if method == "planar" else f"slope ({units}, {method})"
-    src = _layer(layer_id)
+    src = _source(layer_id)
     if method == "geodesic" and is_geographic(src.raster):
         # true 3D slope on the WGS84 ellipsoid, like ArcMap GEODESIC. ArcMap first squares non-square
         # degree cells (JAXA 2" x 1" -> 2" x 2"); we do the same, so the result is a coarser raster.
@@ -165,7 +194,7 @@ def slope(layer_id: str, units: str, method: str = "planar") -> dict:
 def aspect(layer_id: str, flat_as_minus_one: bool = False, method: str = "planar") -> dict:
     flat_value = -1.0 if flat_as_minus_one else None
     label = "aspect" if method == "planar" else f"aspect ({method})"
-    src = _layer(layer_id)
+    src = _source(layer_id)
     if method == "geodesic" and is_geographic(src.raster):
         # direction of the plane fitted on the WGS84 ellipsoid, like ArcMap GEODESIC (cells squared first, as for slope)
         r = square_cells(src.raster) or src.raster
@@ -190,17 +219,17 @@ def curvature(layer_id: str) -> dict:
 
 
 def roughness(layer_id: str) -> dict:
-    src = _layer(layer_id)
+    src = _source(layer_id)
     return _derive(src, compute_roughness(src.raster.data), "roughness", "roughness")
 
 
 def tpi(layer_id: str) -> dict:
-    src = _layer(layer_id)
+    src = _source(layer_id)
     return _derive(src, compute_tpi(src.raster.data), "tpi", "TPI")
 
 
 def ruggedness(layer_id: str) -> dict:
-    src = _layer(layer_id)
+    src = _source(layer_id)
     return _derive(src, compute_ruggedness(src.raster.data), "ruggedness", "ruggedness (TRI)")
 
 

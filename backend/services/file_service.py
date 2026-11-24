@@ -7,7 +7,9 @@ import json
 import math
 from pathlib import Path
 
+from core.raster import utm
 from core.raster._deps import require_rasterio
+from core.raster.crs import is_geographic
 from core.raster.reader import read_raster
 from core.raster.writer import write_ascii_grid, write_geotiff, write_xyz_csv
 from core.vector.reader import SUPPORTED as SUPPORTED_VECTOR, list_layers as list_vector_file_layers, read_vector
@@ -45,6 +47,32 @@ def open_project(path: str) -> dict:
 def save_project(path: str | None, gui: dict | None = None, name: str | None = None,
                  canvases: list[dict] | None = None, active_canvas: str | None = None) -> dict:
     return project.save(path, gui, name, canvases, active_canvas)
+
+
+# ---- project settings ----
+def get_project_settings() -> dict:
+    return dict(project.settings)
+
+
+def update_project_settings(changes: dict) -> dict:
+    zone = changes.get("utm_zone")
+    if zone is not None and str(zone).lower() != "auto" and not utm.ZONE_TEXT.match(str(zone).upper()):
+        raise BadRequest("The UTM zone must be 'auto' or a number from 1 to 60 followed by N or S, e.g. '43N'.",
+                         code="bad_utm_zone")
+    return project.update_settings(changes)
+
+
+def utm_preview(layer_id: str) -> dict:
+    """Which UTM zone 'Analyze in UTM' would use for this layer (without changing anything)."""
+    from shared.layer_store import get_raster_layer
+    r = get_raster_layer(layer_id).raster
+    if not is_geographic(r):
+        return {"applies": False, "reason": "This layer is already in a metre-based coordinate system."}
+    try:
+        epsg = utm.choose_zone(r, project.settings["utm_zone"])
+    except ValueError as e:
+        return {"applies": False, "reason": str(e)}
+    return {"applies": True, "zone": utm.zone_label(epsg), "epsg": epsg}
 
 
 # ---- add data ----

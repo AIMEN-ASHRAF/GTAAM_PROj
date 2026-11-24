@@ -7,7 +7,7 @@ from fastapi import APIRouter
 
 from fastapi import Query, Response, status
 from schemas.common import LayerInfo, Message
-from schemas.file_schemas import AddBasemapRequest, AddRasterRequest, AddVectorRequest, ExportElevationsRequest, ExportVectorRequest, FullscreenRequest, IdentifyRequest, LayerOrder, LayerUpdate, OpenResult, ProjectInfo, ProjectNew, ProjectPath, ProjectSave, ProjectSaveAs, SaveResult, VectorLayerNames
+from schemas.file_schemas import AddBasemapRequest, AddRasterRequest, AddVectorRequest, ExportElevationsRequest, ExportVectorRequest, FullscreenRequest, IdentifyRequest, LayerOrder, LayerUpdate, OpenResult, ProjectInfo, ProjectNew, ProjectSettings, ProjectSettingsUpdate, UtmPreview, ProjectPath, ProjectSave, ProjectSaveAs, SaveResult, VectorLayerNames
 from typing import Literal
 from services import file_service as service
 
@@ -48,6 +48,24 @@ def save_project(req: ProjectSave | None = None):
 @project_router.post("/save-as", response_model=SaveResult)
 def save_project_as(req: ProjectSaveAs):
     return service.save_project(req.path, req.gui, req.name, _canvases(req), req.active_canvas)
+
+@project_router.get("/settings", response_model=ProjectSettings)
+def get_project_settings():
+    """Project Settings: Analyze in UTM, UTM zone, resampling. Saved with the project."""
+    return service.get_project_settings()
+
+
+@project_router.put("/settings", response_model=ProjectSettings)
+def put_project_settings(req: ProjectSettingsUpdate):
+    """Change some settings (only the fields sent). Marks the project as unsaved."""
+    return service.update_project_settings(req.model_dump(exclude_none=True))
+
+
+@project_router.get("/settings/utm-preview", response_model=UtmPreview)
+def utm_preview(layer_id: str):
+    """Which UTM zone 'Analyze in UTM' would use for a layer, before running anything."""
+    return service.utm_preview(layer_id)
+
 
 # ======================================================================
 # File · Add Data  (/file/add-data)

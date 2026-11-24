@@ -137,3 +137,25 @@ class ExportVectorRequest(BaseModel):
 
 class FullscreenRequest(BaseModel):
     enabled: bool
+
+
+class ProjectSettings(BaseModel):
+    """Per-project analysis settings (saved inside the project file)."""
+    analyze_in_utm: bool = False                    # move degree DEMs to UTM (metres) before terrain analysis
+    utm_zone: str = "auto"                          # 'auto' or e.g. '43N' / '41S'
+    resampling: Literal["nearest", "bilinear", "cubic"] = "bilinear"   # used when moving to UTM
+
+
+class ProjectSettingsUpdate(BaseModel):
+    """Only the fields that are sent are changed."""
+    analyze_in_utm: bool | None = None
+    utm_zone: str | None = Field(default=None, pattern=r"^(?i:auto|([1-9]|[1-5][0-9]|60)[NS])$")
+    resampling: Literal["nearest", "bilinear", "cubic"] | None = None
+
+
+class UtmPreview(BaseModel):
+    """What 'Analyze in UTM' would do for one layer (so the window can show it before running)."""
+    applies: bool                                   # False for a layer that is already in metres
+    zone: str | None = None                         # '43N'
+    epsg: int | None = None
+    reason: str | None = None
