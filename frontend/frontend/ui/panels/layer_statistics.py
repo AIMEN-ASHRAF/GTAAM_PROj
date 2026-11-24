@@ -614,20 +614,48 @@ def set_settings_provider(fn: Optional[Callable[[], dict]]) -> None:
     _SETTINGS_PROVIDER = fn
 
 
+_CACHE: dict = {"at": 0.0, "value": {}}
+ARCMAP_DEFAULTS = {"slope_method": "planar", "hillshade_azimuth": 315.0, "hillshade_altitude": 45.0}
+
+
+def invalidate_project_defaults() -> None:
+    """Forget the cached settings (call after they are changed, or a project is opened or created)."""
+    _CACHE["at"] = 0.0
+
+
 def _project_defaults() -> dict:
-    try:
-        return dict(_SETTINGS_PROVIDER()) if _SETTINGS_PROVIDER else {}
-    except Exception:
-        return {}
+    """Current project settings, cached for a few seconds (the map asks on every mouse move)."""
+    import time
+    now = time.monotonic()
+    if now - _CACHE["at"] > 5.0:
+        try:
+            _CACHE["value"] = dict(_SETTINGS_PROVIDER()) if _SETTINGS_PROVIDER else {}
+        except Exception:
+            _CACHE["value"] = {}
+        _CACHE["at"] = now
+    return _CACHE["value"]
 
 
 def field_default(field: dict, defaults: dict):
-    """The value a field should open with: the project setting if the field follows one, else its own value."""
+    """The value a field should open with: the project setting if the field follows one, else its own value.
+    With Match ArcMap on, the settings that ArcMap fixes (planar, hillshade 315 / 45) win."""
     name = field.get("setting")
     if not name or defaults.get(name) is None:
         return field.get("value")
     value = defaults[name]
+    if defaults.get("match_arcmap") and name in ARCMAP_DEFAULTS:
+        value = ARCMAP_DEFAULTS[name]
     return _SETTING_LABELS.get(name, {}).get(value, value)
+
+
+def to_dms(value: float, positive: str, negative: str) -> str:
+    """12.3456 -> 12°20'44.16"N (positive/negative are the letters for each sign)."""
+    letter = positive if value >= 0 else negative
+    v = abs(value)
+    deg = int(v)
+    minutes = int((v - deg) * 60)
+    seconds = (v - deg - minutes / 60) * 3600
+    return f"{deg}\u00b0{minutes:02d}'{seconds:05.2f}\"{letter}"
 
 
 class SettingsForm(QWidget):

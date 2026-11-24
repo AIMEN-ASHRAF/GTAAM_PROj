@@ -32,7 +32,7 @@ import Tools
 import View
 from ui.panels.icon_generator import icon, pixmap
 from ui.panels.layer_statistics import (
-    ContentsPane, InspectorPane, Layer, SampleWorkspace, SettingsForm, set_settings_provider,
+    ContentsPane, InspectorPane, Layer, SampleWorkspace, SettingsForm, set_settings_provider, invalidate_project_defaults,
 )
 from ui.panels.map_bar import PROFILE_COLORS, MapSection
 from ui.panels.project_settings import ProjectSettingsDialog
@@ -1594,6 +1594,10 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Esc"), self, activated=self._escape)
 
         self._connect_signals()
+        self._autosave_ticks = 0                           # Project Settings > Project > Auto-save
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.timeout.connect(self._autosave_tick)
+        self._autosave_timer.start(60_000)                 # once a minute
         self.select_tab(DEFAULT_TAB)
         self.on_layer_selected(None)
         QTimer.singleShot(0, self.map.canvas.fit)
@@ -2730,6 +2734,22 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+Shift+S"), self, activated=self.act_save_project_as)
         self._refresh_title()
 
+    def _autosave_tick(self) -> None:
+        """Every minute: save the project when Auto-save is on, the project has a file and has unsaved changes."""
+        invalidate_project_defaults()
+        try:
+            minutes = int(_project_defaults().get("auto_save_minutes", 0))
+        except Exception:
+            return
+        if not minutes or not self._dirty or self.project_path is None:
+            self._autosave_ticks = 0
+            return
+        self._autosave_ticks += 1
+        if self._autosave_ticks >= minutes:
+            self._autosave_ticks = 0
+            if self._save_to(self.project_path, self.project_name, "/file/project/save"):
+                self.show_toast("Project auto-saved")
+
     def mark_dirty(self) -> None:
         if getattr(self, "_project_ready", False) and not self._dirty:
             self._dirty = True
@@ -2850,7 +2870,11 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, "Project Settings", f"Could not save the settings:\n{_message(exc)}")
             return
+        invalidate_project_defaults()
+        if new.get("scale_bar") != current.get("scale_bar"):
+            self.set_flag("scale_bar", bool(new["scale_bar"]))      # same switch as View > Scale Bar
         self.mark_dirty()
+        self.map.refresh_pixel()                                    # coordinate format shows right away
         if self.selected:                                  # decimals and height unit show right away
             try:
                 self.inspector.show_layer(self.ws.layer(self.selected))

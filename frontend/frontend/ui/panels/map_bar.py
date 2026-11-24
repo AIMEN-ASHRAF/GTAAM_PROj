@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.panels.icon_generator import icon, pixmap
-from ui.panels.layer_statistics import LAYER_MIME, SampleWorkspace, fmt
+from ui.panels.layer_statistics import LAYER_MIME, SampleWorkspace, _project_defaults, fmt, to_dms
 
 PX_METERS = 0.000264583      
 
@@ -1322,16 +1322,20 @@ class MapSection(QFrame):
         geographic = info.get("coordinate_unit") == "°" or (
             info.get("crs") and "4326" in info["crs"]
         )
-        s.easting.setText(f"{x:,.6f}" if geographic
-                          else f"{x:,.2f}")
-        s.northing.setText(f"{y:,.6f}" if geographic
-                           else f"{y:,.2f}")
-        s.easting_unit.setText(info.get("coordinate_unit", "m"))
-        s.northing_unit.setText(info.get("coordinate_unit", "m"))
+        project = _project_defaults()
+        dms = geographic and project.get("coordinate_format") == "dms"          # Project Settings > Display
+        if dms:
+            s.easting.setText(to_dms(x, "E", "W"))
+            s.northing.setText(to_dms(y, "N", "S"))
+        else:
+            s.easting.setText(f"{x:,.6f}" if geographic else f"{x:,.2f}")
+            s.northing.setText(f"{y:,.6f}" if geographic else f"{y:,.2f}")
+        s.easting_unit.setText("" if dms else info.get("coordinate_unit", "m"))
+        s.northing_unit.setText("" if dms else info.get("coordinate_unit", "m"))
         s.easting_name.setText(info.get("x_label", "Easting"))
         s.northing_name.setText(info.get("y_label", "Northing"))
         s.ptype.setText(info["type"])
-        s.pvalue.setText("—" if info["value"] is None else fmt(info["value"]))
+        s.pvalue.setText("—" if info["value"] is None else fmt(info["value"], int(project.get("decimal_places", 1))))
         s.punit.setText(info.get("unit", "m"))
         if info["value"] is None:
             s.pcell.setText(

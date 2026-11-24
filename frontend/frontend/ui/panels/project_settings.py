@@ -245,8 +245,20 @@ class ProjectSettingsDialog(QDialog):
         self._row(c, "Hillshade azimuth", self.azimuth)
         self._row(c, "Hillshade altitude", self.altitude)
         self._row(c, "Contour interval", self.interval)
-        self._note(c, "Each tool can still override these defaults.")
+        self._note(c, "Match ArcMap fixes the method to Planar and the hillshade to 315° / 45°, like ArcMap's own "
+                      "defaults. Untick it to choose your own. Each tool can still override these defaults.")
+        self.match.toggled.connect(self._arcmap_lock)
+        self._arcmap_lock(self.match.isChecked())
         return page
+
+    def _arcmap_lock(self, on: bool) -> None:
+        """With Match ArcMap on, the settings ArcMap fixes are shown as ArcMap's values and cannot be edited."""
+        for widget in (self.method, self.azimuth, self.altitude):
+            widget.setEnabled(not on)
+        if on:
+            self.method.setCurrentIndex(max(0, self.method.findData("planar")))
+            self.azimuth.setValue(315)
+            self.altitude.setValue(45)
 
     def _page_display(self, settings: dict) -> QWidget:
         page, c = self._card("Display")
