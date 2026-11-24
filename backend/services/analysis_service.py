@@ -12,7 +12,7 @@ from core.measure.surface_area import surface_area
 from core.raster.crs import cell_size_by_row, grid_north_offset, is_geographic
 from core.raster.resample import square_cells
 from core.stats import histogram, layer_stats, nodata_check, outliers
-from core.terrain.aspect import aspect_from_gradients, compute_aspect
+from core.terrain.aspect import aspect_from_gradients, compute_aspect, flat_window_mask
 from core.terrain.contours import contour_lines
 from core.terrain.curvature import compute_curvature
 from core.terrain.hillshade import compute_hillshade
@@ -170,7 +170,7 @@ def aspect(layer_id: str, flat_as_minus_one: bool = False, method: str = "planar
         # direction of the plane fitted on the WGS84 ellipsoid, like ArcMap GEODESIC (cells squared first, as for slope)
         r = square_cells(src.raster) or src.raster
         gx, gn = ellipsoid_gradients(r.data, r.origin_y, r.pixel_h, r.pixel_w)
-        data = aspect_from_gradients(gx, gn, flat_value)
+        data = aspect_from_gradients(gx, gn, flat_value, flat_mask=flat_window_mask(r.data), drop_border=True)
         if r is src.raster:
             return _derive(src, data, "aspect", label)
         out = add_raster_layer(r.with_data(data), f"{src.name} - {label}, square cells",

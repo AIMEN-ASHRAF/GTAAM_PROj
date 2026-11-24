@@ -105,7 +105,7 @@ On non-square cells (tiles above 60 N) ArcMap treats the raster as square cells 
 
 ArcMap Slope (GEODESIC) on the 65 N tile writes a 1800 x 1800 output with 2" square cells, so it resamples the 3600 x 1800 input first. The app does the same (`core/raster/resample.py`, `square_cells`: area-weighted average of the covered cells, any ratio). Result against ArcMap: mean difference 0.17 degrees (largest 1.1) on a tile whose mean slope is 7 degrees. On a square-cell tile the same check gives 0.001 degrees (99.6% of cells within 0.01). ArcMap's exact resampling inside the Slope tool is not known: its own resampled DEM (Plus tool) is nearest-neighbour, but the slope agrees better with averaging.
 
-GEODESIC slope border: ArcMap leaves the outermost ring of cells empty (3,598 x 3,598 valid cells on the 3,600 x 3,600 AW3D30 tile, 1,798 x 1,798 on the 65 N tile, 3,599 x 3,599 on the 3,601 x 3,601 SRTM tile). The app now does the same for geodesic slope on degree DEMs (`drop_border=True`). Planar slope still fills the border like ArcMap does. Geodesic aspect has not been checked for this and still fills.
+GEODESIC slope border: ArcMap leaves the outermost ring of cells empty (3,598 x 3,598 valid cells on the 3,600 x 3,600 AW3D30 tile, 1,798 x 1,798 on the 65 N tile, 3,599 x 3,599 on the 3,601 x 3,601 SRTM tile). The app now does the same for geodesic slope on degree DEMs (`drop_border=True`). Planar slope still fills the border like ArcMap does. Geodesic aspect does the same (checked 24 Nov 2026, see below) and the app now drops the border for it too.
 
 ## Second dataset: SRTM 1 arc-second (23 Nov 2026)
 
@@ -138,3 +138,22 @@ Tiles N80 W078 (Ellesmere Island) and S81 E160 (Antarctica, negative latitudes),
 - Does not match cell by cell: when five 1" rows are combined into one 5" row, ArcMap's exact rule is unknown. The app uses an area-weighted block mean, which is among the closest options tried (nearest row, triangle and Hann kernels, rows 1-3 mean). A triangle kernel over 5 rows is marginally closer (0.134) but still not exact, so the app was left unchanged.
 - Result by ratio so far: 1:1 exact (~0.001 deg), 2:1 exact on float data (Copernicus N65, 0.0002 deg), 2:1 on integer data (AW3D30 65N) 0.17 deg, 5:1 about 0.15 deg.
 - Practical meaning: at 80 deg latitude the statistics agree closely, but individual cell values can differ by a degree or more on steep ground (max about 12 deg).
+
+## Aspect (GEODESIC) and re-check of Hillshade and Curvature (24 Nov 2026)
+
+**Aspect, GEODESIC, Copernicus N65E060 (2" x 1" cells, squared first):**
+
+| Item | ArcMap | App |
+|---|---|---|
+| Valid cells | 3,232,804 | 3,232,804 (after fix) |
+| Mean aspect | 186.0615 | 186.0597 |
+| Mean abs difference | - | 0.006 deg |
+| Cells within 0.01 / 0.1 / 1 deg | - | 90.1% / 99.69% / 99.997% |
+| Cells off by more than 1 deg | - | 106 of 3.2 million (near-flat ground) |
+
+- ArcMap's GEODESIC aspect leaves the outermost ring empty, like GEODESIC slope. The app filled it (7,196 extra cells); fixed with `drop_border=True`.
+- ArcMap writes -1 for flat cells and calls a cell flat when its whole 3 x 3 window has one height. The app used a gradient threshold that was too tight for ellipsoid gradients, so about 315 flat cells got a meaningless direction. Fixed with `flat_window_mask`. About 41 other cells ArcMap calls flat (symmetric slopes whose gradient cancels) still differ.
+
+**Re-check after the 23-24 Nov code changes (projected `dem_utm43.tif`):** Curvature still matches on 100% of pixels (max difference 1e-15; 12,590,707 valid cells in both). Hillshade (Az 315, Alt 45, Z 1) still matches on 100% of pixels after rounding down (mean 171.51 in both).
+
+**Not done:** Curvature on a degree DEM (ArcMap's Curvature dialog would not open in the session); Hillshade and Aspect (planar) on Copernicus tiles above 50 N.

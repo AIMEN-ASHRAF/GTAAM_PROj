@@ -311,3 +311,16 @@ def test_square_cells_needs_only_numpy_and_keeps_holes_as_holes():
     d[1, 1] = np.nan
     sq = square_cells(Raster(d, (3.0, 0.0, 0.0, 0.0, -1.0, 6.0), "EPSG:4326", None))
     assert np.isnan(sq.data[0, 1]) and sq.data[0, 0] == pytest.approx(4.0) and sq.data[1, 1] == pytest.approx(17.0)
+
+
+def test_aspect_flat_window_and_drop_border():
+    from core.terrain.aspect import aspect_from_gradients, flat_window_mask
+    dem = np.full((6, 6), 5.0)
+    dem[:, 4:] = 9.0                                   # a step on the right, flat on the left
+    m = flat_window_mask(dem)
+    assert m[2, 1] and not m[2, 3] and not m[2, 4]
+    gx = np.full((6, 6), 1e-6); gn = np.zeros((6, 6))  # tiny but non-zero gradient: noise on a flat window
+    a = aspect_from_gradients(gx, gn, -1.0, flat_mask=m, drop_border=True)
+    assert a[2, 1] == -1.0 and a[2, 3] != -1.0         # flat window -> flat value
+    assert np.isnan(a[0]).all() and np.isnan(a[-1]).all() and np.isnan(a[:, 0]).all() and np.isnan(a[:, -1]).all()
+    assert np.isfinite(a[1:-1, 1:-1]).all()
